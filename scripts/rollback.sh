@@ -12,8 +12,16 @@ export PATH="$HOME/node/bin:$PATH"
 
 TARGET="${1:-}"
 if [ -z "$TARGET" ]; then
+  # Roll back to the last actually different deployed version, not to
+  # the previous_sha of the latest entry: a deploy that pulled nothing
+  # records previous_sha == new_sha == current HEAD, which would be a
+  # no-op rollback. Scan history newest-first for a new_sha that is
+  # not the current HEAD.
+  CURRENT="$(git rev-parse HEAD)"
   if [ -f "$HOME/zdx-deploy-history.jsonl" ]; then
-    TARGET="$(tail -1 "$HOME/zdx-deploy-history.jsonl" | sed -n 's/.*"previous_sha":"\([^"]*\)".*/\1/p')"
+    TARGET="$(tac "$HOME/zdx-deploy-history.jsonl" | sed -n 's/.*"new_sha":"\([^"]*\)".*/\1/p' | while read -r sha; do
+      if [ "$sha" != "$CURRENT" ] && [ "$sha" != "tarball-pre-git" ]; then echo "$sha"; break; fi
+    done)"
   fi
   if [ -z "$TARGET" ] && [ -f "$HOME/zdx-platform-version.json" ]; then
     TARGET="$(sed -n 's/.*"previous_sha":"\([^"]*\)".*/\1/p' "$HOME/zdx-platform-version.json")"
