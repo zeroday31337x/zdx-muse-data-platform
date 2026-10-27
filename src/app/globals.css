@@ -1,0 +1,260 @@
+/* ZeroDriveX Data Intelligence Platform — professional dark theme.
+   Presentation only: no behaviour lives here. */
+
+:root {
+  --bg: #0b1220;
+  --panel: #111c2e;
+  --panel-2: #0f172a;
+  --border: #1e293b;
+  --border-strong: #334155;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --accent-strong: #0284c7;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --bad: #f87171;
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--bg); }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); }
+
+.page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+}
+
+/* ---- Header ---- */
+.kicker {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.brand {
+  margin: 0;
+  font-size: 36px;
+  line-height: 1.15;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  max-width: 760px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.subtitle strong { color: var(--text); font-weight: 600; }
+
+/* ---- Callouts and status ---- */
+.callout {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-top: 20px;
+  font-size: 15px;
+}
+
+.callout strong { color: var(--text); }
+
+.statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-top: 16px;
+  font-size: 15px;
+}
+
+.statusbar .muted { color: var(--muted); }
+
+.pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.pill-ok { color: var(--ok); border-color: #14532d; background: #052e1b; }
+.pill-warn { color: var(--warn); border-color: #713f12; background: #2a1a05; }
+.pill-bad { color: var(--bad); border-color: #7f1d1d; background: #2a0a0a; }
+.pill-neutral { color: var(--muted); }
+
+/* ---- Cards / sections ---- */
+.card {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 16px;
+  padding: 24px;
+  margin-top: 20px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.card h2 {
+  margin: 0 0 6px;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+}
+
+.card > p { color: var(--muted); }
+.card > p:first-of-type { margin-top: 0; }
+
+/* ---- Forms ---- */
+.formrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.input,
+select.input,
+textarea.input {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 15px;
+}
+
+.input:focus,
+select.input:focus,
+textarea.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
+}
+
+.input-wide { width: 100%; }
+.input-flex { flex: 1 1 200px; min-width: 180px; }
+.input-narrow { width: 96px; }
+
+/* ---- Buttons ---- */
+.btn {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+
+.btn-primary {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) { background: #0369a1; border-color: #0369a1; }
+
+.btn-sm { padding: 6px 10px; font-size: 13px; }
+
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ---- Jobs ---- */
+.joblist { list-style: none; margin: 16px 0 0; padding: 0; }
+
+.jobrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+  font-size: 14px;
+}
+
+.jobrow .mono { color: var(--muted); font-family: ui-monospace, monospace; font-size: 13px; }
+.jobrow .err { color: var(--bad); }
+.jobrow .actions { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* ---- Output ---- */
+.output {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 12px 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.output:empty { display: none; }
+
+/* ---- Lists, footer ---- */
+.tight { margin: 12px 0 0; padding-left: 20px; }
+.tight li { margin-top: 6px; }
+
+.footer {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  align-items: center;
+}
+
+/* ---- Mobile ---- */
+@media (max-width: 640px) {
+  .page { padding: 20px 16px 40px; }
+  .brand { font-size: 28px; }
+  .card { padding: 18px 16px; }
+  .input-flex { flex-basis: 100%; }
+  .btn { width: 100%; text-align: center; }
+  .btn-sm { width: auto; }
+  .jobrow .actions { margin-left: 0; }
+}

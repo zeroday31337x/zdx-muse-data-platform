@@ -1,4 +1,4 @@
-# ZDX Muse Data Platform
+# ZeroDriveX Data Intelligence Platform
 
 Meta Global AI Developer Hackathon 2026 — Startup track. Real-data-first data intelligence, provable source lineage, and governed synthetic augmentation, with Muse models only.
 

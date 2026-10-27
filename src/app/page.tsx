@@ -16,6 +16,13 @@ type Job = { id: string; datasetId: string; kind: string; status: string; commit
 type Me = { authenticated: boolean; mode?: string; user?: { email: string; tenantId: string } };
 type RepairCase = { id: string; recordId: string; issue: string; status: string; repairedData?: unknown };
 
+function jobPill(status: string): string {
+  if (status === 'COMPLETED') return 'pill pill-ok';
+  if (status === 'FAILED' || status === 'PARTIAL') return 'pill pill-bad';
+  if (status === 'RUNNING' || status === 'QUEUED' || status === 'PAUSED' || status === 'CANCELLING') return 'pill pill-warn';
+  return 'pill pill-neutral';
+}
+
 export default function Home() {
   const [datasets, setDatasets] = useState<Ds[]>([]);
   const [selected, setSelected] = useState<string>('');
@@ -63,130 +70,159 @@ export default function Home() {
   };
 
   return (
-    <main style={{ maxWidth: 1100, margin: '0 auto', padding: 24 }}>
-      <p style={{ color: '#7dd3fc', letterSpacing: '0.12em' }}>ZERODRIVEX / META AI HACKATHON — STARTUP TRACK</p>
-      <h1>ZDX Muse Data Platform</h1>
-      <p>Real-data-first processing, verified provenance, and controlled synthetic augmentation. Muse models only. Training export is blocked unless the final dataset is ≥70% verified authentic and ≤30% synthetic.</p>
-      <p style={{ background: '#1e293b', padding: 12, borderRadius: 8 }}>30% cap rule: synthetic ≤ floor(3 × authentic / 7). Example: 10,000 authentic → max 4,285 synthetic. Unknown provenance never counts as authentic.</p>
-      <p style={{ background: '#1e293b', padding: 12, borderRadius: 8 }}>
-        Mode: {me?.mode ?? '…'} · {me?.authenticated ? `Signed in as ${me.user?.email} (tenant ${me.user?.tenantId})` : 'Not signed in — datasets shown are the demo file store, not private data.'}
+    <main className="page">
+      <p className="kicker">ZeroDriveX / Meta AI Hackathon — Startup Track</p>
+      <h1 className="brand">ZeroDriveX Data Intelligence Platform</h1>
+      <p className="subtitle">Real-data-first processing, verified provenance, and controlled synthetic augmentation. <strong>Powered by Meta Muse models.</strong> Training export is blocked unless the final dataset is ≥70% verified authentic and ≤30% synthetic.</p>
+
+      <div className="callout"><strong>30% cap rule:</strong> synthetic ≤ floor(3 × authentic / 7). Example: 10,000 authentic → max 4,285 synthetic. Unknown provenance never counts as authentic.</div>
+
+      <div className="statusbar">
+        <span><span className="pill pill-neutral">Mode: {me?.mode ?? '…'}</span></span>
+        <span className="muted">{me?.authenticated ? `Signed in as ${me.user?.email} (tenant ${me.user?.tenantId})` : 'Not signed in — datasets shown are the demo file store, not private data.'}</span>
         {me && !me.authenticated && me.mode !== 'demo-no-db' ? (
-          <span style={{ display: 'block', marginTop: 8 }}>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" style={{ padding: 8, marginRight: 8 }} />
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" style={{ padding: 8, marginRight: 8 }} />
-            <button onClick={async () => { const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) }); const j = await r.json().catch(() => ({})); setMsg(`Login: ${r.status} ${JSON.stringify(j).slice(0, 300)}`); await loadMe(); await load(); }} style={{ padding: 8 }}>Sign in</button>
+          <span className="formrow" style={{ marginTop: 0 }}>
+            <input className="input input-flex" aria-label="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
+            <input className="input input-flex" aria-label="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" />
+            <button className="btn btn-primary" onClick={async () => { const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) }); const j = await r.json().catch(() => ({})); setMsg(`Login: ${r.status} ${JSON.stringify(j).slice(0, 300)}`); await loadMe(); await load(); }}>Sign in</button>
           </span>
         ) : null}
         {me?.authenticated ? (
-          <button onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }); setMe(null); await loadMe(); }} style={{ marginLeft: 8, padding: 8 }}>Sign out</button>
+          <button className="btn" onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }); setMe(null); await loadMe(); }}>Sign out</button>
         ) : null}
-      </p>
+      </div>
 
-      <section style={{ border: '1px solid #334155', padding: 20, borderRadius: 12, marginTop: 20 }}>
+      <section className="card">
         <h2>1. Create dataset</h2>
-        <input value={name} onChange={(e) => setName(e.target.value)} style={{ padding: 8, width: '60%' }} />
-        <button onClick={() => call(async () => fetch('/api/datasets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, purpose: 'training', sourceName: 'Demo sample', sourceLicense: 'Demo sample — mark verified only if you own/rights it' }) }), 'Create dataset')} style={{ marginLeft: 8, padding: 8 }}>Create training dataset</button>
-        <div style={{ marginTop: 12 }}>
-          <label>Dataset: </label>
-          <select value={selected} onChange={(e) => setSelected(e.target.value)}>
-            {datasets.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.id}) — {d.composition?.total ?? 0} records</option>)}
-          </select>
+        <p>Start with a named training dataset, then select it for the steps below.</p>
+        <div className="formrow">
+          <label className="field" style={{ flex: '1 1 260px' }}>Dataset name
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <button className="btn btn-primary" onClick={() => call(async () => fetch('/api/datasets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, purpose: 'training', sourceName: 'Demo sample', sourceLicense: 'Demo sample — mark verified only if you own/rights it' }) }), 'Create dataset')}>Create training dataset</button>
+        </div>
+        <div className="formrow">
+          <label className="field" style={{ flex: '1 1 260px' }}>Dataset
+            <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)}>
+              {datasets.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.id}) — {d.composition?.total ?? 0} records</option>)}
+            </select>
+          </label>
         </div>
       </section>
 
-      <section style={{ border: '1px solid #334155', padding: 20, borderRadius: 12, marginTop: 20 }}>
+      <section className="card">
         <h2>2. Ingest (CSV, verified authentic)</h2>
         <p>Sample below is a demo sample, not real customer data. In production, mark AUTHENTIC_VERIFIED only when you have source + licence evidence.</p>
-        <textarea value={csv} onChange={(e) => setCsv(e.target.value)} rows={8} style={{ width: '100%', padding: 8 }} />
-        <div style={{ marginTop: 8 }}>
-          <button onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: 'csv', text: csv, provenance: 'AUTHENTIC_VERIFIED', sourceName: 'Demo sample', sourceLicense: 'Demo sample' }) }), 'Ingest')} style={{ padding: 8 }}>Ingest as verified authentic</button>
-          <button onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: 'csv', text: csv, provenance: 'AUTHENTIC_UNVERIFIED', sourceName: 'Demo sample', sourceLicense: 'Demo sample' }) }), 'Ingest unverified')} style={{ marginLeft: 8, padding: 8 }}>Ingest as unverified (export will block)</button>
+        <textarea className="input input-wide" value={csv} onChange={(e) => setCsv(e.target.value)} rows={8} />
+        <div className="formrow">
+          <button className="btn btn-primary" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: 'csv', text: csv, provenance: 'AUTHENTIC_VERIFIED', sourceName: 'Demo sample', sourceLicense: 'Demo sample' }) }), 'Ingest')}>Ingest as verified authentic</button>
+          <button className="btn" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: 'csv', text: csv, provenance: 'AUTHENTIC_UNVERIFIED', sourceName: 'Demo sample', sourceLicense: 'Demo sample' }) }), 'Ingest unverified')}>Ingest as unverified (export will block)</button>
         </div>
       </section>
 
-      <section style={{ border: '1px solid #334155', padding: 20, borderRadius: 12, marginTop: 20 }}>
+      <section className="card">
         <h2>3. Analyse, augment, quality, export</h2>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/analyze`, { method: 'POST' }), 'Analyse')} style={{ padding: 8 }}>Analyse</button>
-          <button onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/schema`, { method: 'POST' }), 'Infer schema')} style={{ padding: 8 }}>Infer schema (review required)</button>
-          <button onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/evaluate`, { method: 'POST' }), 'Evaluate')} style={{ padding: 8 }}>Evaluate</button>
-          <button onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/quality`), 'Quality')} style={{ padding: 8 }}>Quality</button>
-          <input type="number" value={augmentCount} onChange={(e) => setAugmentCount(Number(e.target.value))} style={{ width: 80, padding: 8 }} />
-          <button onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/augment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: augmentCount }) }), 'Augment')} style={{ padding: 8 }}>Augment (capped)</button>
-          <button onClick={async () => {
+        <p>Each action runs against the selected dataset and reports its result below.</p>
+        <div className="formrow">
+          <button className="btn" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/analyze`, { method: 'POST' }), 'Analyse')}>Analyse</button>
+          <button className="btn" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/schema`, { method: 'POST' }), 'Infer schema')}>Infer schema (review required)</button>
+          <button className="btn" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/evaluate`, { method: 'POST' }), 'Evaluate')}>Evaluate</button>
+          <button className="btn" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/quality`), 'Quality')}>Quality</button>
+          <label className="field">Synthetic rows
+            <input className="input input-narrow" aria-label="synthetic rows" type="number" value={augmentCount} onChange={(e) => setAugmentCount(Number(e.target.value))} />
+          </label>
+          <button className="btn" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/augment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: augmentCount }) }), 'Augment')}>Augment (capped)</button>
+          <button className="btn btn-primary" disabled={!selected} onClick={async () => {
             if (!selected) return; setMsg('Export…');
             const r = await fetch(`/api/datasets/${selected}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: 'jsonl' }) });
             const j = await r.json().catch(() => ({})); setMsg(`Export: ${r.status} ${JSON.stringify(j.manifest ?? j).slice(0, 800)}`); if (j.content) setExportText(j.content);
-          }} style={{ padding: 8 }}>Export JSONL (gated)</button>
+          }}>Export JSONL (gated)</button>
         </div>
-        <pre style={{ background: '#0f172a', padding: 12, whiteSpace: 'pre-wrap', marginTop: 12 }}>{msg}</pre>
-        {detail ? <pre style={{ background: '#0f172a', padding: 12, whiteSpace: 'pre-wrap' }}>{JSON.stringify(detail, null, 2).slice(0, 2000)}</pre> : null}
-        {exportText ? <pre style={{ background: '#0f172a', padding: 12, whiteSpace: 'pre-wrap' }}>{exportText.slice(0, 4000)}</pre> : null}
+        <pre className="output">{msg}</pre>
+        {detail ? <pre className="output">{JSON.stringify(detail, null, 2).slice(0, 2000)}</pre> : null}
+        {exportText ? <pre className="output">{exportText.slice(0, 4000)}</pre> : null}
       </section>
 
-      <section style={{ border: '1px solid #334155', padding: 20, borderRadius: 12, marginTop: 20 }}>
+      <section className="card">
         <h2>4. Jobs — status, progress, failures, retry</h2>
         <p>Durable jobs run on the server worker (service-authenticated; the browser never holds the worker secret). Pause, resume, and cancel are tenant-scoped. Resume also retries a failed job.</p>
-        <button onClick={load} style={{ padding: 8 }}>Refresh jobs</button>
-        <ul>
+        <div className="formrow">
+          <button className="btn" onClick={load}>Refresh jobs</button>
+          <button className="btn btn-primary" disabled={!selected} onClick={async () => {
+            if (!selected) return; setMsg('Export…');
+            const r = await fetch(`/api/datasets/${selected}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: 'jsonl' }) });
+            const j = await r.json().catch(() => ({})); setMsg(`Export: ${r.status} ${JSON.stringify(j.manifest ?? j).slice(0, 800)}`);
+            if (j.content) { setExportText(j.content); const blob = new Blob([j.content], { type: 'application/x-ndjson' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${selected}.jsonl`; a.click(); }
+          }}>Export JSONL + download file (gated)</button>
+        </div>
+        <ul className="joblist">
           {jobs.map((j) => (
-            <li key={j.id} style={{ marginTop: 8 }}>
-              {j.kind} · {j.status} · {j.committed}/{j.total} · {j.id} {j.error ? `· error: ${j.error}` : ''}
+            <li key={j.id} className="jobrow">
+              <span><strong>{j.kind}</strong></span>
+              <span className={jobPill(j.status)}>{j.status}</span>
+              <span>{j.committed}/{j.total}</span>
+              <span className="mono">{j.id}</span>
+              {j.error ? <span className="err">error: {j.error}</span> : null}
               {me?.authenticated ? (
-                <span style={{ marginLeft: 8 }}>
-                  <button onClick={() => call(async () => fetch(`/api/jobs/${j.id}/pause`, { method: 'POST' }), 'Pause job')} style={{ marginRight: 4, padding: 4 }}>Pause</button>
-                  <button onClick={() => call(async () => fetch(`/api/jobs/${j.id}/resume`, { method: 'POST' }), 'Resume job')} style={{ marginRight: 4, padding: 4 }}>Resume / retry</button>
-                  <button onClick={() => call(async () => fetch(`/api/jobs/${j.id}/cancel`, { method: 'POST' }), 'Cancel job')} style={{ padding: 4 }}>Cancel</button>
+                <span className="actions">
+                  <button className="btn btn-sm" onClick={() => call(async () => fetch(`/api/jobs/${j.id}/pause`, { method: 'POST' }), 'Pause job')}>Pause</button>
+                  <button className="btn btn-sm" onClick={() => call(async () => fetch(`/api/jobs/${j.id}/resume`, { method: 'POST' }), 'Resume job')}>Resume / retry</button>
+                  <button className="btn btn-sm" onClick={() => call(async () => fetch(`/api/jobs/${j.id}/cancel`, { method: 'POST' }), 'Cancel job')}>Cancel</button>
                 </span>
               ) : null}
             </li>
           ))}
-          {jobs.length === 0 ? <li>No jobs yet.</li> : null}
+          {jobs.length === 0 ? <li className="jobrow"><span className="muted">No jobs yet.</span></li> : null}
         </ul>
-        <button onClick={async () => {
-          if (!selected) return; setMsg('Export…');
-          const r = await fetch(`/api/datasets/${selected}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: 'jsonl' }) });
-          const j = await r.json().catch(() => ({})); setMsg(`Export: ${r.status} ${JSON.stringify(j.manifest ?? j).slice(0, 800)}`);
-          if (j.content) { setExportText(j.content); const blob = new Blob([j.content], { type: 'application/x-ndjson' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${selected}.jsonl`; a.click(); }
-        }} style={{ padding: 8 }}>Export JSONL + download file (gated)</button>
       </section>
 
       {me?.authenticated ? (
-        <section style={{ border: '1px solid #334155', padding: 20, borderRadius: 12, marginTop: 20 }}>
+        <section className="card">
           <h2>5. Targeted repair (DB mode)</h2>
           <p>Creating a case never changes data. Approving applies the repaired row in a transaction and records the case id in the record — provenance is not changed by repair.</p>
-          <input value={repairRecordId} onChange={(e) => setRepairRecordId(e.target.value)} placeholder="record id" style={{ padding: 8, marginRight: 8, width: '40%' }} />
-          <input value={repairIssue} onChange={(e) => setRepairIssue(e.target.value)} placeholder="issue description" style={{ padding: 8, marginRight: 8, width: '40%' }} />
-          <textarea value={repairData} onChange={(e) => setRepairData(e.target.value)} placeholder='{"field": "fixed value"} (optional, repaired row JSON)' rows={3} style={{ width: '100%', padding: 8, marginTop: 8 }} />
-          <button onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/repair`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recordId: repairRecordId, issue: repairIssue, repairedData: repairData ? JSON.parse(repairData) : undefined }) }), 'Create repair case')} style={{ padding: 8, marginTop: 8 }}>Create repair case</button>
-          <ul>
+          <div className="formrow">
+            <input className="input input-flex" value={repairRecordId} onChange={(e) => setRepairRecordId(e.target.value)} placeholder="record id" />
+            <input className="input input-flex" value={repairIssue} onChange={(e) => setRepairIssue(e.target.value)} placeholder="issue description" />
+          </div>
+          <textarea className="input input-wide" value={repairData} onChange={(e) => setRepairData(e.target.value)} placeholder='{"field": "fixed value"} (optional, repaired row JSON)' rows={3} style={{ marginTop: 8 }} />
+          <div className="formrow">
+            <button className="btn btn-primary" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/repair`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recordId: repairRecordId, issue: repairIssue, repairedData: repairData ? JSON.parse(repairData) : undefined }) }), 'Create repair case')}>Create repair case</button>
+          </div>
+          <ul className="joblist">
             {repairs.map((c) => (
-              <li key={c.id} style={{ marginTop: 8 }}>
-                {c.status} · {c.issue} · record {c.recordId}
+              <li key={c.id} className="jobrow">
+                <span className={jobPill(c.status)}>{c.status}</span>
+                <span>{c.issue}</span>
+                <span className="mono">record {c.recordId}</span>
                 {c.status === 'open' ? (
-                  <span style={{ marginLeft: 8 }}>
-                    <button onClick={() => call(async () => fetch(`/api/datasets/${selected}/repair/${c.id}/approve`, { method: 'POST' }), 'Approve repair')} style={{ marginRight: 4, padding: 4 }}>Approve</button>
-                    <button onClick={() => call(async () => fetch(`/api/datasets/${selected}/repair/${c.id}/reject`, { method: 'POST' }), 'Reject repair')} style={{ padding: 4 }}>Reject</button>
+                  <span className="actions">
+                    <button className="btn btn-sm" onClick={() => call(async () => fetch(`/api/datasets/${selected}/repair/${c.id}/approve`, { method: 'POST' }), 'Approve repair')}>Approve</button>
+                    <button className="btn btn-sm" onClick={() => call(async () => fetch(`/api/datasets/${selected}/repair/${c.id}/reject`, { method: 'POST' }), 'Reject repair')}>Reject</button>
                   </span>
                 ) : null}
               </li>
             ))}
-            {repairs.length === 0 ? <li>No repair cases for this dataset.</li> : null}
+            {repairs.length === 0 ? <li className="jobrow"><span className="muted">No repair cases for this dataset.</span></li> : null}
           </ul>
         </section>
       ) : null}
 
-      <section style={{ border: '1px solid #334155', padding: 20, borderRadius: 12, marginTop: 20 }}>
+      <section className="card">
         <h2>Model split — read before you send private data</h2>
-        <ul>
+        <ul className="tight">
           <li><b>muse-spark-1.3-contributor</b> — public/demo only. Meta may use it for training. $0.10 / $0.002 cached / $0.20 per million tokens.</li>
           <li><b>muse-spark-1.3</b> — private only. Not used for training. $1.25 / $0.15 cached / $4.25 per million tokens.</li>
           <li><b>muse-image-1.0</b> — $0.01/image, on demand. <b>sam-3.1</b> — segmentation, on demand. <b>muse-voice-transcribe-1.0</b> — $0.18/hour. <b>Multimodal ingestion is NOT operational yet</b> — no verified endpoint functions exist, and the /api/multimodal endpoint returns 503 rather than a simulated result.</li>
           <li><b>No Wonder by default</b> — $4/$20 would burn the $150 grant.</li>
         </ul>
         <p>Full split, EULA, and documentation are in the repo docs. Never paste an API key into this UI — keys are server-side only.</p>
-        <p><a href="/api/health" style={{ color: '#7dd3fc' }}>Health (real store counts)</a> · <a href="/api/models" style={{ color: '#7dd3fc' }}>Models</a> · <a href="/api/jobs" style={{ color: '#7dd3fc' }}>Jobs</a></p>
       </section>
+
+      <footer className="footer">
+        <span>ZeroDriveX Data Intelligence Platform</span>
+        <span>Built with Muse · Meta AI Hackathon, Startup Track</span>
+        <span><a href="/api/health">Health</a> · <a href="/api/models">Models</a> · <a href="/api/jobs">Jobs</a></span>
+      </footer>
     </main>
   );
 }
