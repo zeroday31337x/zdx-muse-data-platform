@@ -52,9 +52,14 @@ npm run typecheck
 npm test
 npm run build
 
-# Restart production server on port 3000. Stop the old next-server, not this script.
-# Use a pattern that cannot match this script's own command line.
-OLD_PIDS=$(pgrep -f "next-server" || true)
+# Next.js rewrites next-env.d.ts on every build. Restore the tracked
+# version so the tree stays clean for the next deploy's dirty check.
+git checkout -- next-env.d.ts 2>/dev/null || true
+
+# Restart production server on port 3000. Match the process name only
+# (pgrep -x), never a full-command-line pattern: a -f pattern can match
+# the invoking shell itself and kill the deploy.
+OLD_PIDS=$(pgrep -x "next-server" || true)
 if [ -n "$OLD_PIDS" ]; then
   echo "Stopping old server: $OLD_PIDS"
   kill $OLD_PIDS || true
@@ -69,7 +74,7 @@ if curl -sf http://localhost:3000/api/health > /dev/null; then
   record_deploy "$(git rev-parse HEAD)" "ok" false
 else
   echo "HEALTH CHECK FAILED after deploy. Server left running for diagnosis." >&2
-  echo "Roll back with: ./scripts/rollback.sh $PREV_SHA" >&2
+  echo "Roll back with: bash scripts/rollback.sh $PREV_SHA" >&2
   record_deploy "$(git rev-parse HEAD)" "health-failed" false
   exit 1
 fi

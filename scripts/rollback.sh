@@ -44,7 +44,13 @@ npm run typecheck
 npm test
 npm run build
 
-OLD_PIDS=$(pgrep -f "next-server" || true)
+# Next.js rewrites next-env.d.ts on every build; restore the tracked
+# version so the tree stays clean for the next deploy's dirty check.
+git checkout -- next-env.d.ts 2>/dev/null || true
+
+# Match the process name only (pgrep -x), never a full-command-line
+# pattern, which can match the invoking shell itself.
+OLD_PIDS=$(pgrep -x "next-server" || true)
 if [ -n "$OLD_PIDS" ]; then
   echo "Stopping old server: $OLD_PIDS"
   kill $OLD_PIDS || true
