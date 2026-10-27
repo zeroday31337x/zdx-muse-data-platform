@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "trainingPolicy": {
+    "authenticMinimumBasisPoints": 7000,
+    "syntheticMaximumBasisPoints": 3000,
+    "unknownAllowed": false
+  },
+  "cases": [
+    {
+      "id": "balanced",
+      "input": {
+        "authentic": 70,
+        "synthetic": 30,
+        "unknown": 0
+      },
+      "expected": true
+    },
+    {
+      "id": "over-ceiling",
+      "input": {
+        "authentic": 69,
+        "synthetic": 31,
+        "unknown": 0
+      },
+      "expected": false
+    },
+    {
+      "id": "unknown",
+      "input": {
+        "authentic": 70,
+        "synthetic": 20,
+        "unknown": 10
+      },
+      "expected": false
+    },
+    {
+      "id": "all-authentic",
+      "input": {
+        "authentic": 100,
+        "synthetic": 0,
+        "unknown": 0
+      },
+      "expected": true
+    },
+    {
+      "id": "no-authentic",
+      "input": {
+        "authentic": 0,
+        "synthetic": 100,
+        "unknown": 0
+      },
+      "expected": false
+    },
+    {
+      "id": "empty",
+      "input": {
+        "authentic": 0,
+        "synthetic": 0,
+        "unknown": 0
+      },
+      "expected": false
+    },
+    {
+      "id": "ten-plus-four",
+      "input": {
+        "authentic": 10,
+        "synthetic": 4,
+        "unknown": 0
+      },
+      "expected": true
+    },
+    {
+      "id": "ten-plus-five",
+      "input": {
+        "authentic": 10,
+        "synthetic": 5,
+        "unknown": 0
+      },
+      "expected": false
+    }
+  ]
+}
