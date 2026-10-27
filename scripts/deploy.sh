@@ -22,6 +22,10 @@ else
 fi
 
 npm install
+# Prisma 7 generates the client into src/generated/ (git-ignored). Generate
+# before typecheck/build so DB routes resolve the generated client at runtime.
+# Generate does not need a live database connection.
+npm run prisma:generate || echo "WARNING: prisma generate failed; DB routes will report PRISMA_CLIENT_NOT_GENERATED"
 npm run typecheck
 npm test
 npm run build

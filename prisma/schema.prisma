@@ -4,13 +4,16 @@
 // application hope: (datasetId, recordKey) is unique, so a replayed
 // batch cannot duplicate committed records even if a worker crashes
 // after inference and before acknowledgement.
+// Prisma 7: the generator is `prisma-client` (rust-free) with an explicit
+// output inside the source tree, and the connection URL lives in
+// prisma.config.ts, NOT in this file (datasource `url` was removed in v7).
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum Provenance {
