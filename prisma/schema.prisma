@@ -1,0 +1,170 @@
+// PostgreSQL + Prisma schema for Phase 2.
+// Tenant isolation is enforced in queries (tenantId on every row), not
+// only in the UI. Record uniqueness is a database constraint, not an
+// application hope: (datasetId, recordKey) is unique, so a replayed
+// batch cannot duplicate committed records even if a worker crashes
+// after inference and before acknowledgement.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Provenance {
+  AUTHENTIC_VERIFIED
+  AUTHENTIC_UNVERIFIED
+  DERIVED_SOURCE_PRESERVING
+  AI_AUGMENTED
+  SYNTHETIC
+  UNKNOWN
+}
+
+enum DatasetPurpose {
+  training
+  simulation
+}
+
+enum JobStatus {
+  DRAFT
+  QUEUED
+  RUNNING
+  PAUSED
+  CANCELLING
+  CANCELLED
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+model Tenant {
+  id        String    @id @default(cuid())
+  name      String
+  createdAt DateTime  @default(now())
+  users     User[]
+  datasets  Dataset[]
+  jobs      Job[]
+  usage     UsageLedger[]
+  audit     AuditLog[]
+}
+
+model User {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  email        String    @unique
+  passwordHash String
+  role         String    @default("member")
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Dataset {
+  id             String          @id @default(cuid())
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  name           String
+  purpose        DatasetPurpose  @default(training)
+  sourceName     String          @default("")
+  sourceLicense  String          @default("")
+  sourceChecksum String          @default("")
+  schemaJson     Json?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  records        Record[]
+  jobs           Job[]
+  proposals      SchemaProposal[]
+  repairs        RepairCase[]
+}
+
+model Record {
+  id             String     @id @default(cuid())
+  datasetId      String
+  dataset        Dataset    @relation(fields: [datasetId], references: [id])
+  recordKey      String
+  data           Json
+  provenance     Provenance
+  sourceId       String
+  sourceFamilyId String?
+  tokens         Int
+  meta           Json?
+  createdAt      DateTime   @default(now())
+
+  @@unique([datasetId, recordKey])
+  @@index([datasetId, provenance])
+}
+
+model Job {
+  id            String    @id @default(cuid())
+  datasetId     String
+  dataset       Dataset   @relation(fields: [datasetId], references: [id])
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  kind          String
+  status        JobStatus @default(QUEUED)
+  total         Int       @default(0)
+  committed     Int       @default(0)
+  error         String?
+  attempts      Int       @default(0)
+  leaseOwner    String?
+  leaseExpiresAt DateTime?
+  checkpoint    Json?
+  payload       Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model UsageLedger {
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  model            String
+  purpose          String
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  costUsd          Float    @default(0)
+  createdAt        DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  actor     String
+  action    String
+  entity    String
+  details   Json?
+  createdAt DateTime @default(now())
+}
+
+model SchemaProposal {
+  id        String   @id @default(cuid())
+  datasetId String
+  dataset   Dataset  @relation(fields: [datasetId], references: [id])
+  fields    Json
+  model     String?
+  status    String   @default("proposed")
+  createdAt DateTime @default(now())
+}
+
+model RepairCase {
+  id          String   @id @default(cuid())
+  datasetId   String
+  dataset     Dataset  @relation(fields: [datasetId], references: [id])
+  recordId    String
+  issue       String
+  status      String   @default("open")
+  repairedData Json?
+  createdAt   DateTime @default(now())
+}
