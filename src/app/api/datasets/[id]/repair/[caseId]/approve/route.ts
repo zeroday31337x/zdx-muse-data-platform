@@ -1,0 +1,28 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { NextResponse } from 'next/server';
+import { dbConfigured, prisma } from '@/lib/db';
+import { requireSession, isSessionResult, datasetForTenant } from '@/lib/authz';
+export const dynamic = 'force-dynamic';
+export async function POST(req: Request, ctx: { params: Promise<{ id: string; caseId: string }> }) {
+  const { id, caseId } = await ctx.params;
+  if (!dbConfigured()) return NextResponse.json({ error: 'DATABASE_NOT_CONFIGURED' }, { status: 503 });
+  const s = await requireSession(req);
+  if (!isSessionResult(s)) return s.response;
+  const ds = await datasetForTenant(id, s.user.tenantId);
+  if (!ds) return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
+  const db = prisma();
+  const c = await db.repairCase.findFirst({ where: { id: caseId, datasetId: id } });
+  if (!c || c.status !== 'open') return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
+  if (!c.repairedData) return NextResponse.json({ error: 'NO_REPAIRED_DATA', message: 'Case has no repairedData to apply.' }, { status: 409 });
+  const rec = await db.record.findFirst({ where: { id: c.recordId, datasetId: id } });
+  if (!rec) return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
+  // Provenance is NOT changed by repair: human approval is recorded in
+  // meta, and the repair case id is retained for audit.
+  const updated = await db.$transaction(async (tx: any) => {
+    const meta = { ...((rec.meta as Record<string, unknown>) ?? {}), repaired: true, repairCaseId: c.id, repairedAt: new Date().toISOString() };
+    const r = await tx.record.update({ where: { id: rec.id }, data: { data: c.repairedData, meta } });
+    const cc = await tx.repairCase.update({ where: { id: c.id }, data: { status: 'approved' } });
+    return { record: r, case: cc };
+  });
+  return NextResponse.json(updated);
+}

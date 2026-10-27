@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
-import { dbConfigured } from '@/lib/db';
+import { requireSession, isSessionResult, jobForTenant } from '@/lib/authz';
 import { requestResume } from '@/lib/worker';
 export const dynamic = 'force-dynamic';
-export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
-  if (!dbConfigured()) return NextResponse.json({ error: 'DATABASE_NOT_CONFIGURED' }, { status: 503 });
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const s = await requireSession(req);
+  if (!isSessionResult(s)) return s.response;
   const { id } = await ctx.params;
-  const r = await requestResume(id);
+  const job = await jobForTenant(id, s.user.tenantId);
+  if (!job) return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
+  const r = await requestResume(id, s.user.tenantId);
+  if (!r.ok && r.error === 'NOT_FOUND') return NextResponse.json(r, { status: 404 });
   return NextResponse.json(r, { status: r.ok ? 200 : 409 });
 }

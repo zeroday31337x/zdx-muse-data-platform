@@ -10,6 +10,20 @@ describe('job transitions', () => {
     expect(canTransition('COMPLETED', 'QUEUED')).toBe(false);
     expect(canTransition('RUNNING', 'COMPLETED')).toBe(true);
   });
+  it('allows the cancel surface: QUEUED/PAUSED->CANCELLED directly, RUNNING->CANCELLING->CANCELLED, CANCELLING is idempotent', () => {
+    expect(canTransition('QUEUED', 'CANCELLED')).toBe(true);
+    expect(canTransition('PAUSED', 'CANCELLED')).toBe(true);
+    expect(canTransition('RUNNING', 'CANCELLING')).toBe(true);
+    expect(canTransition('CANCELLING', 'CANCELLED')).toBe(true);
+    // Re-cancelling a CANCELLING job is idempotent at the requestCancel
+    // level (it returns ok without a state change), not via this table,
+    // which intentionally lists only real state changes.
+    expect(canTransition('COMPLETED', 'CANCELLED')).toBe(false);
+    expect(canTransition('CANCELLED', 'QUEUED')).toBe(false);
+  });
+  it('allows FAILED->QUEUED so resume doubles as the retry path', () => {
+    expect(canTransition('FAILED', 'QUEUED')).toBe(true);
+  });
 });
 describe('spending limits', () => {
   it('refuses a call that would exceed the daily cap', () => {

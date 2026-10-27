@@ -46,3 +46,11 @@ Updated: 2026-10-27, Phase 1 vertical slice
 - Meta live status: NOT VERIFIED. The founder's dev.meta.ai team, $150 grant, and server-side key are not in this environment. Do not claim a live Meta call until one succeeds and its usage is logged.
 
 Never mark TESTED, DEPLOYED, or VERIFIED without corresponding evidence.
+
+## 2026-10-27 — Priorities 1–4 implementation (local: typecheck + build pass, tests 20/20; staging validation pending)
+
+- P1 tenant isolation: session + tenant scoping on datasets, records, ingest, augment, evaluate, quality, export, schema, analyze, jobs list, and job pause/resume/cancel; cross-tenant resources return 404. Worker endpoint requires WORKER_SECRET (503 unset, 401 wrong secret). Health in DB mode reports mode only, no per-tenant counts.
+- P2 worker lifecycle: claimNextJob reclaims expired leases and finalises expired CANCELLING jobs; multi-batch ingest requeues atomically (no 5-minute stall); lease-guarded checkpoint/finish/requeue return 409 STALE_LEASE for stale workers; QUEUED/PAUSED cancel is immediate, RUNNING cancel finalises after the current batch.
+- P3 PostgreSQL integration: DB-backed dataset creation/list/get, records (offset pagination), ingest (chunked createMany, skipDuplicates), augment (transactional gate + createMany), evaluate, quality, export (gated, manifest + caveat), schema (proposal persisted), analyze (UsageLedger on Meta success). UI: login/logout, mode indicator, jobs list with pause/resume/retry/cancel, export download as a file.
+- P4 repair + multimodal: repair cases (create never changes data; approve applies repairedData in a transaction, records repairCaseId in meta, provenance unchanged; reject marks rejected) with UI in DB mode. Multimodal endpoint is gated 503 MULTIMODAL_NOT_OPERATIONAL — no verified endpoint functions, never a simulated result.
+- Still NOT verified: live Meta inference (no key in this environment, no paid call made), staging validation of the new code, and production promotion. File/demo mode remains demo-only.

@@ -12,6 +12,10 @@ const SAMPLE_CSV = `order_id,customer,product,amount
 1006,Eve,Notebook,24.99
 1007,Frank,Backpack,59.00`;
 
+type Job = { id: string; datasetId: string; kind: string; status: string; committed: number; total: number; error?: string | null };
+type Me = { authenticated: boolean; mode?: string; user?: { email: string; tenantId: string } };
+type RepairCase = { id: string; recordId: string; issue: string; status: string; repairedData?: unknown };
+
 export default function Home() {
   const [datasets, setDatasets] = useState<Ds[]>([]);
   const [selected, setSelected] = useState<string>('');
@@ -21,13 +25,29 @@ export default function Home() {
   const [csv, setCsv] = useState(SAMPLE_CSV);
   const [augmentCount, setAugmentCount] = useState(2);
   const [exportText, setExportText] = useState('');
+  const [me, setMe] = useState<Me | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [repairs, setRepairs] = useState<RepairCase[]>([]);
+  const [repairRecordId, setRepairRecordId] = useState('');
+  const [repairIssue, setRepairIssue] = useState('');
+  const [repairData, setRepairData] = useState('');
 
   const load = async () => {
-    const r = await fetch('/api/datasets'); const j = await r.json(); setDatasets(j);
+    const r = await fetch('/api/datasets'); const j = await r.json(); setDatasets(Array.isArray(j) ? j : []);
     if (j[0] && !selected) setSelected(j[0].id);
+    const jr = await fetch('/api/jobs'); const jj = await jr.json().catch(() => []); if (Array.isArray(jj)) setJobs(jj);
+  };
+  const loadMe = async () => {
+    const r = await fetch('/api/auth/me'); const j = await r.json().catch(() => ({})); setMe(j);
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, []);
+  useEffect(() => { loadMe(); load(); }, []);
+  useEffect(() => {
+    if (!selected || !me?.authenticated) { setRepairs([]); return; }
+    fetch(`/api/datasets/${selected}/repair`).then((r) => r.json()).then((j) => { if (Array.isArray(j)) setRepairs(j); }).catch(() => {});
+  }, [selected, me]);
   useEffect(() => {
     if (!selected) return;
     fetch(`/api/datasets/${selected}`).then((r) => r.json()).then(setDetail).catch(() => {});
@@ -48,6 +68,19 @@ export default function Home() {
       <h1>ZDX Muse Data Platform</h1>
       <p>Real-data-first processing, verified provenance, and controlled synthetic augmentation. Muse models only. Training export is blocked unless the final dataset is ≥70% verified authentic and ≤30% synthetic.</p>
       <p style={{ background: '#1e293b', padding: 12, borderRadius: 8 }}>30% cap rule: synthetic ≤ floor(3 × authentic / 7). Example: 10,000 authentic → max 4,285 synthetic. Unknown provenance never counts as authentic.</p>
+      <p style={{ background: '#1e293b', padding: 12, borderRadius: 8 }}>
+        Mode: {me?.mode ?? '…'} · {me?.authenticated ? `Signed in as ${me.user?.email} (tenant ${me.user?.tenantId})` : 'Not signed in — datasets shown are the demo file store, not private data.'}
+        {me && !me.authenticated && me.mode !== 'demo-no-db' ? (
+          <span style={{ display: 'block', marginTop: 8 }}>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" style={{ padding: 8, marginRight: 8 }} />
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" style={{ padding: 8, marginRight: 8 }} />
+            <button onClick={async () => { const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) }); const j = await r.json().catch(() => ({})); setMsg(`Login: ${r.status} ${JSON.stringify(j).slice(0, 300)}`); await loadMe(); await load(); }} style={{ padding: 8 }}>Sign in</button>
+          </span>
+        ) : null}
+        {me?.authenticated ? (
+          <button onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }); setMe(null); await loadMe(); }} style={{ marginLeft: 8, padding: 8 }}>Sign out</button>
+        ) : null}
+      </p>
 
       <section style={{ border: '1px solid #334155', padding: 20, borderRadius: 12, marginTop: 20 }}>
         <h2>1. Create dataset</h2>
@@ -92,11 +125,63 @@ export default function Home() {
       </section>
 
       <section style={{ border: '1px solid #334155', padding: 20, borderRadius: 12, marginTop: 20 }}>
+        <h2>4. Jobs — status, progress, failures, retry</h2>
+        <p>Durable jobs run on the server worker (service-authenticated; the browser never holds the worker secret). Pause, resume, and cancel are tenant-scoped. Resume also retries a failed job.</p>
+        <button onClick={load} style={{ padding: 8 }}>Refresh jobs</button>
+        <ul>
+          {jobs.map((j) => (
+            <li key={j.id} style={{ marginTop: 8 }}>
+              {j.kind} · {j.status} · {j.committed}/{j.total} · {j.id} {j.error ? `· error: ${j.error}` : ''}
+              {me?.authenticated ? (
+                <span style={{ marginLeft: 8 }}>
+                  <button onClick={() => call(async () => fetch(`/api/jobs/${j.id}/pause`, { method: 'POST' }), 'Pause job')} style={{ marginRight: 4, padding: 4 }}>Pause</button>
+                  <button onClick={() => call(async () => fetch(`/api/jobs/${j.id}/resume`, { method: 'POST' }), 'Resume job')} style={{ marginRight: 4, padding: 4 }}>Resume / retry</button>
+                  <button onClick={() => call(async () => fetch(`/api/jobs/${j.id}/cancel`, { method: 'POST' }), 'Cancel job')} style={{ padding: 4 }}>Cancel</button>
+                </span>
+              ) : null}
+            </li>
+          ))}
+          {jobs.length === 0 ? <li>No jobs yet.</li> : null}
+        </ul>
+        <button onClick={async () => {
+          if (!selected) return; setMsg('Export…');
+          const r = await fetch(`/api/datasets/${selected}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: 'jsonl' }) });
+          const j = await r.json().catch(() => ({})); setMsg(`Export: ${r.status} ${JSON.stringify(j.manifest ?? j).slice(0, 800)}`);
+          if (j.content) { setExportText(j.content); const blob = new Blob([j.content], { type: 'application/x-ndjson' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${selected}.jsonl`; a.click(); }
+        }} style={{ padding: 8 }}>Export JSONL + download file (gated)</button>
+      </section>
+
+      {me?.authenticated ? (
+        <section style={{ border: '1px solid #334155', padding: 20, borderRadius: 12, marginTop: 20 }}>
+          <h2>5. Targeted repair (DB mode)</h2>
+          <p>Creating a case never changes data. Approving applies the repaired row in a transaction and records the case id in the record — provenance is not changed by repair.</p>
+          <input value={repairRecordId} onChange={(e) => setRepairRecordId(e.target.value)} placeholder="record id" style={{ padding: 8, marginRight: 8, width: '40%' }} />
+          <input value={repairIssue} onChange={(e) => setRepairIssue(e.target.value)} placeholder="issue description" style={{ padding: 8, marginRight: 8, width: '40%' }} />
+          <textarea value={repairData} onChange={(e) => setRepairData(e.target.value)} placeholder='{"field": "fixed value"} (optional, repaired row JSON)' rows={3} style={{ width: '100%', padding: 8, marginTop: 8 }} />
+          <button onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/repair`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recordId: repairRecordId, issue: repairIssue, repairedData: repairData ? JSON.parse(repairData) : undefined }) }), 'Create repair case')} style={{ padding: 8, marginTop: 8 }}>Create repair case</button>
+          <ul>
+            {repairs.map((c) => (
+              <li key={c.id} style={{ marginTop: 8 }}>
+                {c.status} · {c.issue} · record {c.recordId}
+                {c.status === 'open' ? (
+                  <span style={{ marginLeft: 8 }}>
+                    <button onClick={() => call(async () => fetch(`/api/datasets/${selected}/repair/${c.id}/approve`, { method: 'POST' }), 'Approve repair')} style={{ marginRight: 4, padding: 4 }}>Approve</button>
+                    <button onClick={() => call(async () => fetch(`/api/datasets/${selected}/repair/${c.id}/reject`, { method: 'POST' }), 'Reject repair')} style={{ padding: 4 }}>Reject</button>
+                  </span>
+                ) : null}
+              </li>
+            ))}
+            {repairs.length === 0 ? <li>No repair cases for this dataset.</li> : null}
+          </ul>
+        </section>
+      ) : null}
+
+      <section style={{ border: '1px solid #334155', padding: 20, borderRadius: 12, marginTop: 20 }}>
         <h2>Model split — read before you send private data</h2>
         <ul>
           <li><b>muse-spark-1.3-contributor</b> — public/demo only. Meta may use it for training. $0.10 / $0.002 cached / $0.20 per million tokens.</li>
           <li><b>muse-spark-1.3</b> — private only. Not used for training. $1.25 / $0.15 cached / $4.25 per million tokens.</li>
-          <li><b>muse-image-1.0</b> — $0.01/image, on demand. <b>sam-3.1</b> — segmentation, on demand. <b>muse-voice-transcribe-1.0</b> — $0.18/hour.</li>
+          <li><b>muse-image-1.0</b> — $0.01/image, on demand. <b>sam-3.1</b> — segmentation, on demand. <b>muse-voice-transcribe-1.0</b> — $0.18/hour. <b>Multimodal ingestion is NOT operational yet</b> — no verified endpoint functions exist, and the /api/multimodal endpoint returns 503 rather than a simulated result.</li>
           <li><b>No Wonder by default</b> — $4/$20 would burn the $150 grant.</li>
         </ul>
         <p>Full split, EULA, and documentation are in the repo docs. Never paste an API key into this UI — keys are server-side only.</p>

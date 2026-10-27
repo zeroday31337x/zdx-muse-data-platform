@@ -6,8 +6,21 @@
 // - Checkpoint: committed count + last processed index, saved in the same
 //   transaction as the records, so a crash replays from the checkpoint
 //   without duplicating (recordKey uniqueness is the second guard).
-// - Pause / resume / cancel: status transitions are validated here, and
-//   cancellation is checked between batches, not only at start.
+// - Lease continuation: after a partial batch the job is atomically
+//   re-queued (status QUEUED, lease cleared) instead of staying RUNNING
+//   until its lease expires, so the next tick claims it immediately.
+//   There is no 5-minute delay between batches for a live worker.
+// - Stale-lease protection: checkpoint/finish updates are conditional
+//   on leaseOwner + status RUNNING. A worker that lost its lease
+//   (expired, reclaimed, cancelled, paused) cannot overwrite the new
+//   owner's progress; its update affects 0 rows and it must abort.
+// - Cancel: QUEUED/PAUSED jobs go straight to CANCELLED. RUNNING jobs
+//   go to CANCELLING, and the owning worker finalises them to CANCELLED
+//   after its current batch; a worker tick also finalises any
+//   CANCELLING job whose lease expired or was never held. CANCELLING
+//   is therefore never a terminal resting state.
+// - Pause / resume: pause is checked between batches, not only at start.
+//   A paused job keeps its checkpoint and resumes from it.
 // - Crash recovery: leases older than now() are reclaimable; a worker
 //   that dies mid-batch leaves RUNNING + expired lease, which the next
 //   claim picks up as QUEUED.
@@ -20,10 +33,11 @@ export async function claimNextJob(workerId: string) {
   // Claim inside ONE transaction: the FOR UPDATE SKIP LOCKED row lock
   // only holds for the transaction's duration, so selecting and then
   // updating outside a transaction would let two workers claim the
-  // same QUEUED job. Reclaiming stale leases happens in the same
-  // transaction, so a crashed worker's job is re-queued atomically.
+  // same QUEUED job. Reclaiming stale leases and finalising stale
+  // cancellations happen in the same transaction.
   return db.$transaction(async (tx: any) => {
     await tx.$executeRaw`UPDATE "Job" SET status='QUEUED', "leaseOwner"=NULL, "leaseExpiresAt"=NULL WHERE status='RUNNING' AND "leaseExpiresAt" < NOW()`;
+    await tx.$executeRaw`UPDATE "Job" SET status='CANCELLED', "leaseOwner"=NULL, "leaseExpiresAt"=NULL WHERE status='CANCELLING' AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" < NOW())`;
     const jobs = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Job" WHERE status='QUEUED' ORDER BY "createdAt" ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
     if (jobs.length === 0) return null;
     const leaseExpiresAt = new Date(Date.now() + LEASE_MS);
@@ -31,33 +45,93 @@ export async function claimNextJob(workerId: string) {
   });
 }
 
-export async function updateCheckpoint(jobId: string, committed: number, checkpoint: Record<string, unknown>) {
-  return prisma().job.update({ where: { id: jobId }, data: { committed, checkpoint } });
+/** Finalise every CANCELLING job that is not currently held by a live lease. Returns how many were finalised. */
+export async function finalizeCancellingJobs() {
+  const db = prisma();
+  const r = await db.$executeRaw`UPDATE "Job" SET status='CANCELLED', "leaseOwner"=NULL, "leaseExpiresAt"=NULL WHERE status='CANCELLING' AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" < NOW())`;
+  return Number(r);
 }
 
-export async function finishJob(jobId: string, status: 'COMPLETED' | 'PARTIAL' | 'FAILED', error?: string | null) {
-  return prisma().job.update({ where: { id: jobId }, data: { status, error: error ?? null, leaseOwner: null, leaseExpiresAt: null } });
+/**
+ * Checkpoint update guarded by lease ownership. Returns true if the
+ * update applied, false if this worker no longer holds the lease
+ * (stale worker: caller must abort, not continue or finish the job).
+ */
+export async function updateCheckpoint(jobId: string, committed: number, checkpoint: Record<string, unknown>, leaseOwner?: string) {
+  const db = prisma();
+  if (!leaseOwner) {
+    await db.job.update({ where: { id: jobId }, data: { committed, checkpoint } });
+    return true;
+  }
+  const r = await db.job.updateMany({ where: { id: jobId, leaseOwner, status: 'RUNNING' }, data: { committed, checkpoint } });
+  return r.count > 0;
 }
 
-export async function requestPause(jobId: string) {
-  const job = await prisma().job.findUnique({ where: { id: jobId } });
-  if (!job || !canTransition(job.status, 'PAUSED')) return { ok: false, error: 'INVALID_TRANSITION', status: job?.status };
-  await prisma().job.update({ where: { id: jobId }, data: { status: 'PAUSED' } });
+/**
+ * Atomically re-queue a partially finished job after a batch, so the
+ * next tick claims it immediately (no lease-expiry wait). Guarded by
+ * lease ownership and by status: if the job was paused or cancelled
+ * mid-batch, it is NOT re-queued here — the caller handles those
+ * states from a fresh read instead.
+ */
+export async function requeueAfterBatch(jobId: string, committed: number, checkpoint: Record<string, unknown>, leaseOwner: string) {
+  const db = prisma();
+  const r = await db.job.updateMany({ where: { id: jobId, leaseOwner, status: 'RUNNING' }, data: { committed, checkpoint, status: 'QUEUED', leaseOwner: null, leaseExpiresAt: null } });
+  return r.count > 0;
+}
+
+export async function finishJob(jobId: string, status: 'COMPLETED' | 'PARTIAL' | 'FAILED' | 'CANCELLED', error?: string | null, leaseOwner?: string) {
+  const db = prisma();
+  if (!leaseOwner) {
+    return db.job.update({ where: { id: jobId }, data: { status, error: error ?? null, leaseOwner: null, leaseExpiresAt: null } });
+  }
+  // For CANCELLED, the lease may already have been cleared by a cancel
+  // request; allow it if the job is RUNNING with this lease OR already
+  // CANCELLING. For other terminal states, require the live RUNNING lease.
+  const where = status === 'CANCELLED'
+    ? { id: jobId, OR: [{ leaseOwner, status: 'RUNNING' }, { status: 'CANCELLING' }] }
+    : { id: jobId, leaseOwner, status: 'RUNNING' };
+  const r = await db.job.updateMany({ where, data: { status, error: error ?? null, leaseOwner: null, leaseExpiresAt: null } });
+  if (r.count === 0) throw new Error('STALE_LEASE');
+  return r;
+}
+
+export async function getJob(jobId: string) {
+  return prisma().job.findUnique({ where: { id: jobId } });
+}
+
+export async function requestPause(jobId: string, tenantId?: string) {
+  const db = prisma();
+  const job = tenantId ? await db.job.findFirst({ where: { id: jobId, tenantId } }) : await db.job.findUnique({ where: { id: jobId } });
+  if (!job || !canTransition(job.status, 'PAUSED')) return { ok: false, error: job ? 'INVALID_TRANSITION' : 'NOT_FOUND', status: job?.status };
+  // Pausing a RUNNING job does not kill its current batch; the worker
+  // checks status after the batch and leaves it PAUSED with checkpoint.
+  await db.job.update({ where: { id: jobId }, data: { status: 'PAUSED' } });
   return { ok: true, status: 'PAUSED' };
 }
 
-export async function requestResume(jobId: string) {
-  const job = await prisma().job.findUnique({ where: { id: jobId } });
-  if (!job || !canTransition(job.status, 'QUEUED')) return { ok: false, error: 'INVALID_TRANSITION', status: job?.status };
-  await prisma().job.update({ where: { id: jobId }, data: { status: 'QUEUED', leaseOwner: null, leaseExpiresAt: null } });
+export async function requestResume(jobId: string, tenantId?: string) {
+  const db = prisma();
+  const job = tenantId ? await db.job.findFirst({ where: { id: jobId, tenantId } }) : await db.job.findUnique({ where: { id: jobId } });
+  if (!job || !canTransition(job.status, 'QUEUED')) return { ok: false, error: job ? 'INVALID_TRANSITION' : 'NOT_FOUND', status: job?.status };
+  await db.job.update({ where: { id: jobId }, data: { status: 'QUEUED', leaseOwner: null, leaseExpiresAt: null } });
   return { ok: true, status: 'QUEUED' };
 }
 
-export async function requestCancel(jobId: string) {
-  const job = await prisma().job.findUnique({ where: { id: jobId } });
+export async function requestCancel(jobId: string, tenantId?: string) {
+  const db = prisma();
+  const job = tenantId ? await db.job.findFirst({ where: { id: jobId, tenantId } }) : await db.job.findUnique({ where: { id: jobId } });
   if (!job) return { ok: false, error: 'NOT_FOUND' };
-  if (job.status === 'RUNNING' || job.status === 'QUEUED' || job.status === 'PAUSED') {
-    await prisma().job.update({ where: { id: jobId }, data: { status: 'CANCELLING' } });
+  if (job.status === 'QUEUED' || job.status === 'PAUSED') {
+    // Not running: cancel immediately, no CANCELLING intermediate.
+    await db.job.update({ where: { id: jobId }, data: { status: 'CANCELLED', leaseOwner: null, leaseExpiresAt: null } });
+    return { ok: true, status: 'CANCELLED' };
+  }
+  if (job.status === 'RUNNING') {
+    await db.job.update({ where: { id: jobId }, data: { status: 'CANCELLING' } });
+    return { ok: true, status: 'CANCELLING' };
+  }
+  if (job.status === 'CANCELLING') {
     return { ok: true, status: 'CANCELLING' };
   }
   return { ok: false, error: 'INVALID_TRANSITION', status: job.status };
