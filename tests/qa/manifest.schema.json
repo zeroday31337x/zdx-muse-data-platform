@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ZDX dataset provenance export manifest contract (proposed)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "datasetId",
+    "datasetVersion",
+    "generatedAt",
+    "composition",
+    "sources",
+    "quality"
+  ],
+  "properties": {
+    "version": {
+      "const": "1"
+    },
+    "datasetId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "datasetVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "composition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authentic",
+        "synthetic",
+        "unknown",
+        "unit"
+      ],
+      "properties": {
+        "authentic": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "synthetic": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unit": {
+          "enum": [
+            "records",
+            "tokens",
+            "images",
+            "audio-seconds"
+          ]
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "sha256",
+          "rightsStatus"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "rightsStatus": {
+            "enum": [
+              "verified",
+              "restricted",
+              "unknown"
+            ]
+          }
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "required": [
+        "evaluationVersion",
+        "verified"
+      ],
+      "properties": {
+        "evaluationVersion": {
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
