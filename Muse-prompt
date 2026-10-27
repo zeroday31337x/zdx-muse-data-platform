@@ -1,0 +1,286 @@
+# ZDX Muse Synthesis — Master Build Prompt
+
+**Project:** ZDX Muse Synthesis
+**Purpose:** Meta AI hackathon entry and production\-oriented data intelligence platform
+**Owner:** ZeroDriveX
+**Revision:** 2026\-10\-27 — integrated real\-data\-first policy
+**Target:** New, independently deployable application, architecturally informed by ZDX Data Synthesis
+
+> **Instructions to Muse Code:** Treat this document as the authoritative implementation brief. Implement incrementally, verify all provider assumptions against official current Meta documentation and live account access, and keep the existing ZDX Data Synthesis production environment untouched. Do not fabricate completed work, provider capabilities, metrics, or test outcomes.
+
+## 0\. Mission and non\-negotiable boundaries
+
+Build **ZDX Muse Synthesis**, a state\-of\-the\-art, real\-data\-first platform for ingesting, understanding, transforming, validating, enriching, and packaging authentic data, with tightly controlled AI\-generated augmentation\. Reproduce the useful capabilities of the existing ZeroDriveX Data Synthesis platform and substantially improve durability, scalability, commercial value, quality measurement, lineage, UX, and autonomous processing\.
+
+This is **not** an unrestricted fictional\-record generator\. For datasets designated for model training, the platform must enforce a **maximum 30% synthetic contribution in the final exported dataset**, with **at least 70% provenance\-verifiable authentic source data**\. This is a product policy rather than a universal scientific guarantee against model collapse\. Never claim the threshold itself prevents model collapse; assess quality, distribution drift, leakage, contamination, and downstream evaluation independently\.
+
+Use **Meta Muse models for all generative and semantic AI operations**\. Use **Muse Code as the principal coding agent** to develop the new project\. Conventional deterministic code must handle arithmetic, ingestion, parsing, schema validation, authorization, job orchestration, lineage, budgeting, statistics, and persistence\. No OpenAI, Anthropic, Google, Groq, OpenRouter, Nebius, Ollama, or other non\-Meta inference backends in operational AI workflows\.
+
+Build in a separate repository &#40;suggested name `zdx-muse-synthesis`&#41;, with isolated database, credentials, storage, and deployment\. **Do not modify the existing ZDX Data Synthesis production system\.** Treat the existing app as a read\-only design/functional reference where the hackathon rules permit; document any reused code\. Before copying source, verify the hackathon’s eligibility requirements for pre\-existing work, permitted SDKs, required model use, and submission evidence\.
+
+Do not use Vercel; prefer existing authorized ZDX infrastructure with a minimal, standalone Docker deployment\. Do not connect to the existing ZDX inference pool or agent memory pool\. Avoid new infrastructure that a solo operator cannot maintain\.
+
+## 1\. Development workflow and verification
+
+Before implementation:
+
+1. Read the hackathon’s actual official terms and participant instructions; capture relevant eligibility and judging requirements in `docs/hackathon-compliance.md`\.
+2. Read official Meta developer documentation for Muse Code and the Meta model APIs\. **Do not assume a model, ID, endpoint, account entitlement, output format, or streaming capability exists merely because it appears in this brief\.** Record actual authenticated behavior, quotas, billing, and errors\.
+3. Audit ZDX Data Synthesis if source access exists: screens, API routes, source analysis, ingestion, dataset generation, commercial dataset features, review workflow, provider adapters, persistence, exports, deployment, limits, and known defects\. Write `docs/reference-audit.md` distinguishing reference behavior, copied assets, reimplementation, and genuinely new work\.
+4. Establish project structure and CI, produce an architecture decision record, then implement a tested vertical slice before adding optional breadth\.
+
+Keep a living `docs/implementation-status.md` with distinct statuses: `PLANNED`, `IMPLEMENTED`, `TESTED`, `DEPLOYED`, `VERIFIED_WITH_META`\. Never mark a capability validated on the basis of mocks alone\.
+
+## 2\. Stack and deployment
+
+- **Frontend:** Next\.js App Router, React, TypeScript strict mode, Tailwind CSS, accessible component library, TanStack Query where useful, Zod \+ React Hook Form for complex inputs\.
+- **Backend:** Node\.js LTS, TypeScript, versioned authenticated HTTP APIs, strong request/response validation\.
+- **Worker:** independent TypeScript worker process, PostgreSQL\-backed persistent job queue &#40;evaluate `pg-boss` against actual stack before committing&#41;, leases, bounded batches, idempotency, checkpointing\.
+- **Database:** PostgreSQL \+ Prisma with committed migrations, suitable unique constraints and indexes\. Use JSONB selectively for validated record payloads\.
+- **Artifacts:** S3\-compatible object storage with tenant\-scoped keys, checksums, encryption/access controls, and expiring signed downloads\.
+- **Operations:** Docker Compose for independent web and worker services, structured redacted logs, health and readiness endpoints, actionable operational diagnostics, optional OpenTelemetry\.
+- **UI updates:** SSE with reconnect and authoritative state reconciliation; browser requests must not own long\-running jobs\.
+
+Do not introduce Kubernetes, Kafka, service meshes, or multi\-service orchestration frameworks unless evidence shows the simpler approach is insufficient\.
+
+## 3\. Meta\-only AI integration
+
+Start from the official Meta Model API documentation and verify the actual **base URL, authentication header, responses endpoint, request fields, streaming shape, multimodal interfaces, and model names** before shipping any integration\. The candidate configuration from project planning is:
+
+- Meta API base: `https://api.meta.ai/v1` &#40;verify against current account documentation&#41;\.
+- Default reasoning / generation: `muse-spark-1.3` &#40;verify access and model identifier&#41;\.
+- Higher\-complexity planning: `muse-wonder-1.0` &#40;verify access&#41;\.
+- Image creation: `muse-image-1.0` &#40;verify endpoint/model availability&#41;\.
+- Audio transcription: `muse-voice-transcribe-1.0` &#40;verify endpoint/model availability&#41;\.
+- Image/video segmentation: `sam-3.1` &#40;verify availability and interface&#41;\.
+
+These are **candidate model identifiers, not proof of entitlement**\. If a candidate is unavailable, report its exact blocker, disable the associated optional feature, and retain the Meta\-only requirement\. Do not silently route to non\-Meta services\. Map model roles to actually available Meta capabilities in a documented registry\.
+
+All calls are server\-side\. Store secrets only in secret management/environment injection, never in repository, logs, browser, or exports\. Implement one typed Meta adapter supporting allowed models, appropriate endpoint routing, bounded timeouts, cancellation, streamed events where officially supported, validated structured results, tool\-call allowlists, request identifiers, token/usage capture, error classification, telemetry, and spending budgets\. Validate tool arguments before execution; no untrusted model\-generated SQL or shell commands\.
+
+For retryable errors &#40;including eligible 429/5xx&#41;, respect `Retry-After`, exponential backoff with jitter, and strict attempt/budget ceilings\. Do not retry permanent auth, missing entitlement, quota exhaustion, or invalid request failures blindly\. Model completion followed by lost delivery may incur duplicate inference cost; keep storage idempotent\. Use Meta’s non\-training/standard data handling mode by default wherever available; verify Meta account\-specific privacy and retention terms before processing proprietary uploads\. Never opt customers into a data\-contribution mode implicitly\.
+
+## 4\. Product positioning and operating modes
+
+**Primary product:** an authentic\-data intelligence and preparation platform that cleans, analyzes, restructures, labels, enriches, and packages source\-derived information, adding limited synthetic examples where useful and authorized\.
+
+Offer these clearly separated modes:
+
+1. **Real\-Data Processing:** transforms, cleans, merges, deduplicates, validates, and exports authentic supplied material without requiring generation\.
+2. **Training Dataset Studio:** builds training\-ready datasets from authenticated sources, with the **30% synthetic ceiling enforced across the final dataset**\.
+3. **Controlled Augmentation:** adds constrained synthetic examples only within remaining composition allowance, with full lineage and quality gates\.
+4. **Simulation / Test Fixtures:** can produce wholly fictional datasets for software testing, clearly labeled **100% synthetic, not compliant training data**\. Separate UI, manifests, reporting, and export labels\. Do not use this mode to evade the training policy\.
+
+The term **commercial\-ready** means packaged for legitimate downstream business workflows with traceability and measurable quality, **not** a claim that users own third\-party source rights or that generated output is inherently safe to sell\.
+
+## 5\. Provenance\-aware 30% policy: mandatory core invariant
+
+For a training dataset version, define compositional units explicitly\. Usually these are rows/examples; for language\-model instruction datasets also report **token\-weighted proportions**\. For multimodal datasets, define meaningful modality\-specific unit/weighting policies &#40;e\.g\., examples and duration for audio&#41;, rather than pretending one image equals one token\. Maintain source contribution and transformation lineage across joins, splits, re\-import, and export\.
+
+Let `A` = eligible provenance\-verifiable authentic examples and `S` = synthetic examples in the final version\. Enforce:
+
+`S / (A + S) <= 0.30` and `A / (A + S) >= 0.70`\.
+
+Consequently, `S <= floor(3 * A / 7)`\. If 10,000 verified authentic examples exist, at most **4,285** synthetic examples can be added while remaining at or below 30% by example count\. Compute this from committed, eligible examples, not uploaded row counts\. Enforce the policy on every dataset\-version transition and **again at training export**, not merely at planning\.
+
+**Classifications:** `AUTHENTIC_VERIFIED`, `AUTHENTIC_UNVERIFIED`, `DERIVED_SOURCE_PRESERVING`, `AI_AUGMENTED`, `SYNTHETIC`, and `UNKNOWN`\. Store source IDs, source license/consent metadata, transformation IDs, model invocation, timestamps, hashes, and parent example IDs\. Document a policy for how source\-preserving transformations are counted\. Mere cleaning, reformatting, or type normalization can remain source\-derived with traceability; generative rewriting, fabricated substantive fields, hallucinated answers, and entirely created examples consume synthetic budget\. **Do not launder uncertain or synthetic input into authentic status\.** Unknown/unverified examples must not be counted toward the verified 70% until provenance is resolved\.
+
+A source record duplicated or paraphrased into multiple rows must not automatically multiply the authentic quota\. Implement lineage\-aware de\-duplication and defensible source\-family counting, with reports on both physical rows and effective independent examples\. If lineage accounting becomes ambiguous, conservatively mark the material as ineligible to increase authentic quota pending review\.
+
+Model\-assisted labeling of authentic examples is neither automatically real ground truth nor automatically an entirely synthetic record: capture `annotation_origin=MODEL`, confidence, human\-review status, and a configurable composition policy\. For training examples that include model\-invented targets, treat the synthetic portion conservatively\. Where field\-level generated content materially changes the example, count it as synthetic for the hard example\-count ceiling unless a more rigorous reviewed policy is established\.
+
+For instruction fine\-tuning and similar tasks, provide both record\-weighted and token\-weighted summaries; allow an optional stricter rule that **both must remain <=30%**\. Choose the stricter of the applicable configured hard gates\. Track cumulative provenance across exports, imports, merges, and regeneration\. Detect probable previously generated data and quarantine uncertainty instead of pretending detection is perfect\.
+
+On violation: block compliant export, show the exact numerator/denominator, affected records, and corrective actions &#40;remove synthetic records, add legitimate verified source content, or export as clearly noncompliant/simulation material under explicit authorization&#41;\. Do not silently change counts, drop records, or reclassify examples to make metrics pass\.
+
+The 30% ceiling is **a platform governance default, not a scientifically established guarantee of avoiding model collapse**\. Include this precise caveat in documentation and reports, and separately evaluate contamination, memorization, diversity, data drift, and downstream task accuracy\.
+
+## 6\. Complete user\-facing workspaces
+
+### A\. Overview
+
+Show actual persisted dataset counts, source volumes, authenticated/synthetic composition, active/failed jobs, validation failures, storage, model usage, estimated costs, and recent activity\. No fabricated metrics\. Provide reliable loading/empty/error states\.
+
+### B\. Dataset Studio
+
+Two experiences:
+
+- **Autonomous:** user specifies goal and files; Muse interprets inputs, proposes schema, classifications, safe processing workflow, estimated authentic coverage, permitted augmentation ceiling, validation and export targets\.
+- **Advanced:** user configures schema, mappings, constraints, distributions, segmentation, transformations, labeling, quality gates, and approved augmentation budgets\.
+
+Wizard: purpose/use case \-\> ingest \-\> assess provenance \-\> analyze \-\> infer/edit schema \-\> plan \-\> preview \-\> approve \-\> process/augment \-\> validate/review \-\> export\.
+
+Supported templates: classification, extraction, instruction tuning, chat, RAG question\-answer pairs with citations, tool\-call trajectories, ecommerce **authentic transaction processing and analysis**, customer support, document intelligence, testing fixtures &#40;separate simulation&#41;, security test cases, and multimodal labeling\.
+
+### C\. Source Intelligence
+
+Ingest CSV, JSON, JSONL, TXT, Markdown, PDF text, DOCX, XLSX, safe ZIP bundles, images, supported audio, and explicitly allowlisted HTTPS URL imports\. Add video only after core system stability\. Use conventional extractors and stream large sources; use Muse for semantics, extraction planning, schema inference, entity recognition, source contradiction detection, and classification\.
+
+Perform safe MIME/signature checks, byte limits, anti\-zip\-bomb checks, optional malware scanning, checksums, permissions, content boundaries, deduplication, basic PII risk detection, provenance and source license capture\. For URL fetches enforce DNS and redirect revalidation and block loopback, private, link\-local, metadata, and reserved destinations &#40;SSRF&#41;\.
+
+Produce inspectable analyses: extracted record counts, parse errors, source coverage, provenance confidence, schema suggestions, contradictions, known unknowns, field distributions, class balance, and recommended next processing steps\. Preserve raw extracts and versioned transformation artifacts\.
+
+### D\. Autonomous Data Architect
+
+Muse proposes immutable, versioned processing plans with source mappings, schema, business constraints, label strategy, deterministic transforms, allowable augmentation, stages, quality thresholds, sampling, batch sizes, provider usage estimates, and risk flags\. User approves plans; backend validates every limit and policy before scheduling\. Muse never directly changes quotas or authorizations\.
+
+### E\. Real\-Data Processing Engine
+
+Build capable non\-generative pipelines for mapping, normalization, deduplication, schema alignment, type coercion, validation, column selection, joins, entity resolution, safe masking/pseudonymization, filtering, partitioning, labeling review, feature engineering, and CSV/JSONL/Parquet conversion\. Preserve row/source lineage and reproducibility\. Explicitly distinguish pseudonymization from anonymization; do not imply reidentification risk is eliminated\.
+
+### F\. Controlled Muse Augmentation
+
+Generate only the synthetic examples actually needed and allowable under the final mix\. Sample rare cases where appropriate without misrepresenting real prevalence; do not hallucinate factual citations or provenance\. Generate bounded batches with schemas, prompts/templates, deterministic IDs, timeouts, validation, semantic review, failure quarantine, and repair\. Do not automatically create 100% fictional commercial training datasets\.
+
+For ecommerce examples, ingest a legitimate transactional sample, clean and reconcile existing real records, derive realistic but source\-grounded relationships and statistics, and **only then** fill explicitly approved gaps up to 30%\. Keep synthetic customer/order examples distinct from authentic transactions\.
+
+### G\. Quality Lab
+
+Measure structural conformance, completeness, referential and temporal consistency, duplicates/near\-duplicates, distribution drift, class balance, data freshness, training target consistency, provenance coverage, label agreement, privacy/memorization risk, outliers, useful diversity, and fit to task\. Separate deterministic facts from Muse\-based subjective judgments\. Show denominators, thresholds, failing samples, and remediation actions\. Run human\-reviewed holdout testing where possible; no guarantee of downstream model quality solely from judge scores\.
+
+### H\. Targeted Repair
+
+Classify a failure, attempt deterministic correction where safe, call Muse only for genuinely semantic repair, preserve pre/post versions and provenance, revalidate, enforce capped attempts and spending, and quarantine unresolved examples\. Repairs that introduce substantively generated content must update synthetic accounting\. Never hide failure by shrinking the denominator\.
+
+### I\. Dataset Explorer and Review
+
+Server\-side cursor pagination, search, filters, sort, record inspection, lineage, validation flags, composition classification, version diff, inline edits with audit log, human acceptance/rejection, bulk operations, quarantine management, and async export\. Large datasets must not be loaded wholly into client memory\.
+
+### J\. Multimodal Lab
+
+Integrate only actually accessible Meta capabilities\. Examples: text/document understanding and source\-linked extraction; Muse\-generated image augmentation with provenance; SAM segmentation for annotations; audio transcription with timestamps/speaker metadata only where provided by the actual service\. Track per\-modality composition and licensing\. Provide end\-to\-end tests per advertised modality\. Label unavailable features clearly rather than faking their completion\.
+
+### K\. Exports and Dataset Packaging
+
+CSV, JSON, JSONL; Parquet and Hugging Face\-compatible layouts after verified implementation\. Stream large outputs to object storage, produce integrity checksums and authenticated expiring URLs\. Package dataset card, composition manifest, source/license lineage, generation and processing configuration, model provenance, validation report, uncertainty flags, train/validation/test split strategy, schema and version details\. Strictly block misrepresented training\-compliant exports\.
+
+### L\. Model Operations
+
+Actual model accessibility, model names, requests, token usage, latency, errors, quota/rate\-limit events, spending, usage forecast, and privacy configuration\. Do not display static green status for an untested model\.
+
+## 7\. Persistent jobs and fault tolerance
+
+Job states: `DRAFT`, `ANALYZING`, `READY`, `QUEUED`, `RUNNING`, `VALIDATING`, `NEEDS_REVIEW`, `COMPLETED`, `PAUSING`, `PAUSED`, `CANCELLING`, `CANCELLED`, `PARTIAL`, `FAILED`\. Define legal transitions and transactional invariants\.
+
+Workers claim work via lease, load immutable plan, inspect committed checkpoints, process bounded batches, persist validated results and classification/lineage atomically, renew lease, and release on completion\. Use stable IDs, unique `(dataset_version_id, record_key)` constraints, idempotent write paths, and queue\-delivery replay protection\. This specifically avoids the historical ZDX failure where retries caused duplicate `datasetId/recordKey` constraint exceptions\. Track committed progress only\. Browser disconnect must never terminate processing\. SSE reconnect reads persisted state\. Pause, cancellation, and recovery must be safe at batch boundaries\.
+
+Test crash after inference but before commit; crash mid\-transaction; duplicate queue delivery; exhausted provider budget; stalled lease; invalid record; cross\-tenant input; cancellation racing commit; export failure\. Persist known incomplete results as partial, never success\.
+
+## 8\. Data domain and persistence
+
+At minimum: users, organizations, memberships/roles, projects, datasets, versions, schemas, sources/files, source documents/chunks, source consent/license metadata, provenance edges/families, processing plans, transformations, jobs, batches, checkpoints, records, labels, validations, repair attempts, review events, model invocations, usage/budget ledger, exports, artifacts, and audit events\.
+
+Every relevant record has immutable organizational ownership or enforceable tenant ancestry, stable IDs, timestamps, and explicit indexes\. Metadata stays in PostgreSQL; large files and exports stay in object storage\. Store schema and model request versions\. Maintain referential and cross\-record constraints and support reproducible export manifests\.
+
+Use an explicit composition accounting service that reads committed eligible records, not a mutable frontend counter\. Make its calculations independently testable and concurrency safe\.
+
+## 9\. Security, data rights, and privacy
+
+- Server\-side authn; explicit least\-privilege authz on every route and background task; tenant\-scoped records/object storage\.
+- Prefer ZDX auth service only if integration is authorized, stable, and permissible under hackathon rules; otherwise use a well\-established managed/maintained auth solution, not a custom identity provider\.
+- Secure HttpOnly cookie/session strategy, CSRF protections where applicable, secure headers, strict input validation, bounded requests\.
+- Model outputs and uploaded documents are **untrusted**: treat instructions within source data as data, not control instructions\. Tool calls are allowlisted, schema checked, and scoped\.
+- Rate and spend controls at organization, user, job, model, and worker\-concurrency level\. Enforce upper spending bound and reserve budget for retries/repairs\.
+- Secrets from server injection or secret manager only\. Redacted structured logs; avoid raw prompts and private source material in telemetry\.
+- Permission checks for signed downloads and async export creation\. Prevent spreadsheet formula injection\.
+- SSRF\-safe remote fetch, upload type/size limits, decompression limits, malware\-scan hooks, no executable source ingestion, and no arbitrary shell/SQL evaluation\.
+- Record data\-processing purpose and rights/consent/retention metadata\. Do not advertise automatically inferred rights as legal clearance\.
+- Verify Meta data\-retention and contribution settings before processing proprietary content\.
+- Encrypt traffic and storage where appropriate; implement retention/deletion, tenant\-level audit trails, and backup/restore planning\.
+
+## 10\. API contracts
+
+Versioned authenticated endpoints for: dataset/version CRUD, upload initiation/finalization, source analyses, provenance, schema proposals, plan approval, preview, execution/pause/resume/cancel, progress stream, record pagination/review, quality reports, repairs, composition calculations, export create/status/download, model health/usage, and administration\. Enforce Zod contracts, stable error types, optimistic concurrency or idempotency keys for relevant writes, and cursor pagination\. Produce an OpenAPI specification from verified contracts where practical\.
+
+## 11\. UX requirements
+
+Professional, accessible, responsive console with sections: Overview, Dataset Studio, Sources, Jobs, Quality Lab, Dataset Explorer, Provenance, Exports, Model Operations, Settings\. Provide a visual pipeline:
+
+`Sources → Provenance → Analysis → Schema → Plan → Transformation → Controlled Augmentation → Validation → Review → Export`
+
+Always show source\-authentic vs synthetic mix, remaining synthetic allowance, active step, durable committed progress, errors, approval gates, cost usage, and whether execution continues after disconnect\. Accurate empty/loading/error states and consistent keyboard navigation\. No hardcoded 200\-record UI cap or mocked production KPIs\. Virtually render or paginate large tables\.
+
+## 12\. Testing strategy and acceptance criteria
+
+### Deterministic tests
+
+- `S / (A+S) <= 0.30` boundary &#40;including zero authentic, unknown provenance, fractional edge, concurrent commits&#41;\.
+- For 10,000 eligible authentic examples, 4,285 synthetic examples allowed, 4,286 rejected\.
+- Source\-family duplication does not inflate authentic quota\.
+- Generation/repair/rewrite changes lineage and composition correctly\.
+- Re\-import of known synthetic data does not reset origin\.
+- Mixed train/validation/test splits and merges retain lineage and limits\.
+- Token\-weighted composition is reported for text training datasets, and the stricter configured rule enforced\.
+- Export refuses a noncompliant training dataset with an auditable reason\.
+- Simulation datasets are explicitly labeled and cannot masquerade as real\-data\-first training datasets\.
+- Tenant isolation, authorization, SSRF, archive safety, prompt\-injection defense, CSV injection, signing/expiry, and quota protection\.
+- Unique\-key replay, worker crash/resume, transactional commit, cancellation race, SSE reconnect, and retry limits\.
+- Parsing, mapping, transformation, deduplication, large pagination, export checksums, quality denominators and label provenance\.
+
+### Live provider tests
+
+Use actual authorized Meta API credentials to prove source interpretation, schema proposal, controlled generation, semantic quality evaluation, and at least one successful source\-to\-export workflow\. Verify optional multimodal features independently\. Record exact model IDs/versions, request IDs as allowed, measured latency/tokens/cost, actual rate\-limit behavior, and failures\. Mock tests do not substitute for these checks\.
+
+### Core product demonstrations
+
+**Demo 1: Real\-data\-first ecommerce operations dataset\.** Import legally reusable authentic sample transactions, products, and customers; infer schema; reconcile real relationships; clean, map, normalize, and validate\. Augment with a **clearly labeled <=30%** synthetic training subset only if needed\. Verify that totals reconcile and source lineage is visible\. Never describe generated fictional transaction histories as the authentic 70%\.
+
+**Demo 2: Agent training corpus\.** Import verified real or licensed interaction examples; transform them into structured tool\-call examples, add bounded synthetic edge cases under 30%, validate tool schema and quality, and export with provenance\.
+
+**Demo 3: Document intelligence\.** Import open\-licensed or owner\-provided documents; extract and label source\-grounded records with citations; distinguish factual extraction from invented examples; document uncertainty and label origin\.
+
+**Demo 4: Failure recovery\.** Start a substantial job, kill a worker, restart, and verify committed counts, uniqueness, budget accounting, and continuation\.
+
+**Demo 5: Model\-bound multimodal task\.** Demonstrate a genuinely tested available Meta specialist model, or document the exact unavailable capability and keep it out of product claims\.
+
+### Definition of done
+
+An authenticated user can ingest legitimate source data, see provenance assessment, obtain a Muse\-generated analysis and approved transformation plan, run durable background processing, inspect quality and composition, optionally add synthetic examples within the strict budget, review output at scale, restart an interrupted worker without duplicate commits, and export an accurate traceable dataset card and artifact\. All advertised Meta integrations must be verified on the real account\. A separate simulation mode, if delivered, must be unmistakably identified\.
+
+## 13\. Prioritized development phases
+
+**Phase 0 — Eligibility, audit, access\.** Validate hackathon terms; read\-only audit of ZDX; repo/CI; credentials and Meta API smoke tests; stack decisions; database/auth/storage skeleton\. Do not proceed on invented access claims\.
+
+**Phase 1 — Working vertical slice\.** Dataset/project creation; upload source; parse and record provenance; Muse source analysis; schema proposal; deterministic clean/transform; controlled sample generation; strict 30% composition check; validated JSONL export; first integration tests\.
+
+**Phase 2 — Durability\.** Worker/queue/leases/checkpoints; idempotency; cost budget; pause/resume/cancel; SSE; failure injection; pagination\.
+
+**Phase 3 — Commercial quality\.** Relational source processing, lineage graph, Quality Lab, source\-family de\-duplication, targeted repair, data cards, advanced transformation and review\.
+
+**Phase 4 — Multimodal and advanced planning\.** Add Muse Wonder, image, transcription, SAM workflows only if authenticated access and core reliability allow\.
+
+**Phase 5 — Verification and submission\.** Real Meta integration tests, audit/tenant security tests, demo datasets, measured benchmarks, deployment, README, architecture, feature checklist, source/reuse disclosure, recorded demo, hackathon submission evidence\.
+
+Target event deadline assumed from planning: **November 4, 2026, 9:00 PM Eastern — verify official event portal before relying on this date**\. Prefer a complete tested pipeline over a broad unfinished interface\.
+
+## 14\. Pre\-mortem and design constraints
+
+|Risk                                            |Likelihood / impact|Mitigation                                                                          |
+|------------------------------------------------|-------------------|------------------------------------------------------------------------------------|
+|Hackathon terms bar reused implementation       |Unknown / critical |Verify official terms before copying code; document new work and references         |
+|Scope exceeds event window                      |High / critical    |Build one full workflow first; defer optional multimodal features                   |
+|Meta access/quota unavailable                   |High / high        |Authenticated smoke test first; track entitlements and token spend                  |
+|Synthetic quota incorrectly computed            |High / critical    |Explicit provenance model, lineage-family accounting, transactional composition gate|
+|AI labels treated as authentic truth            |High / high        |Model-vs-human annotation provenance, holdout review, confidence gates              |
+|Imported synthetic material laundered as real   |High / critical    |Persist origin through transformations; quarantine uncertain data                   |
+|Quality metrics imply unsupported guarantees    |High / high        |Report exact definitions, empirical tests, and limits                               |
+|Worker failures create duplicate records        |High / high        |Idempotent record keys, checkpoints and transactional writes                        |
+|Sensitive customer material enters training mode|Medium / critical  |Verify Meta privacy terms, default conservative processing mode                     |
+|Solo-founder operating overhead grows           |High / high        |One application, one worker, Postgres, object storage, no needless orchestration    |
+
+Decisions costly to reverse: tenant ownership structure, immutable version identity, provenance classifications, composition unit and calculation rules, job checkpoint semantics, and source/license lineage\. Resolve these early with tests and ADRs\.
+
+## 15\. Required code and evidence deliverables
+
+- New repository with committed frontend, API, worker, migrations, providers, and Docker deployment\.
+- `.env.example` with no secrets; deployment/rollback/restore instructions\.
+- `docs/reference-audit.md`, `docs/hackathon-compliance.md`, `docs/architecture.md`, `docs/security.md`, `docs/model-capabilities.md`, `docs/data-composition-policy.md`, `docs/quality-methodology.md`, `docs/implementation-status.md`\.
+- Automated security/logic/unit/integration/E2E tests; opt\-in live Meta tests\.
+- Source\-to\-export demo with **measured** quality and composition, provider usage, failure\-recovery evidence, and human\-verifiable provenance\.
+- Submission\-ready README, architecture diagram, product demo, and documented limitations\.
+
+## 16\. Execution command
+
+Start by inspecting the working repository, official Meta documentation, current access to Muse models, actual hackathon rules, and &#40;if accessible&#41; the existing ZDX Data Synthesis reference\. Produce a short prioritized implementation plan with verified assumptions and an explicit feature list\. Then build **Phase 0 and the complete Phase 1 vertical slice**, testing each milestone before expanding\. Continue through later phases according to evidence and remaining scope; do not substitute mock\-success screens for working integration\. Preserve existing production services throughout\.
+
+**Highest priority:** verified authentic\-data provenance, a provably correct 30% synthetic ceiling, production\-grade processing, and a reliable Meta\-powered end\-to\-end workflow\.
