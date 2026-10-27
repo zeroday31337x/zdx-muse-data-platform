@@ -47,30 +47,35 @@ export async function POST() {
     if (job.kind === 'augment' && payload.count) {
       const count = payload.count;
       // Transactional composition gate, then insert synthetic rows.
+      // One createMany, not one upsert per row: 4,285 per-row upserts
+      // exceeded Prisma's 5s interactive-transaction timeout and left
+      // a partially committed batch. createMany is a single statement,
+      // so the gate + insert commit or roll back together, and
+      // skipDuplicates keeps a replay of the same job idempotent
+      // (committed counts only rows actually inserted).
+      // Synthetic keys must be unique per job, not just per base
+      // record + index: two augment jobs that both start at i=0
+      // previously upserted the same key, so the second job reported
+      // success without creating a distinct record (and the cap
+      // gate could not arbitrate concurrent jobs). Job id in the
+      // key makes each job's synthetics distinct.
       const result = await db.$transaction(async (tx: any) => {
         const check = await checkCompositionInTx(tx, job.datasetId, count);
         if (!check.ok) throw new Error('SYNTHETIC_CAP_EXCEEDED');
         const authentic = await tx.record.findMany({ where: { datasetId: job.datasetId, provenance: 'AUTHENTIC_VERIFIED' }, take: count });
-        let committed = job.committed;
+        const rows = [];
         for (let i = 0; i < count; i++) {
           const base = authentic[i % authentic.length];
           if (!base) break;
           const data = { ...(base.data as Record<string, unknown>) };
           for (const f of ['order_id', 'id', 'record_id']) if (data[f] !== undefined) { data[f] = `SYN-${String(data[f])}-${i}`; break; }
-          // Synthetic keys must be unique per job, not just per base
-          // record + index: two augment jobs that both start at i=0
-          // previously upserted the same key, so the second job reported
-          // success without creating a distinct record (and the cap
-          // gate could not arbitrate concurrent jobs). Job id in the
-          // key makes each job's synthetics distinct; a replay of the
-          // SAME job still upserts the same keys (idempotent).
-          const key = `${base.recordKey}-syn-${job.id}-${i}`;
-          await tx.record.upsert({ where: { datasetId_recordKey: { datasetId: job.datasetId, recordKey: key } }, update: {}, create: { datasetId: job.datasetId, recordKey: key, data, provenance: 'SYNTHETIC', sourceId: base.sourceId, sourceFamilyId: base.sourceFamilyId, tokens: estimateTokens(data) } });
-          committed++;
+          rows.push({ datasetId: job.datasetId, recordKey: `${base.recordKey}-syn-${job.id}-${i}`, data, provenance: 'SYNTHETIC', sourceId: base.sourceId, sourceFamilyId: base.sourceFamilyId, tokens: estimateTokens(data) });
         }
+        const inserted = rows.length > 0 ? await tx.record.createMany({ data: rows, skipDuplicates: true }) : { count: 0 };
+        const committed = job.committed + inserted.count;
         await tx.job.update({ where: { id: job.id }, data: { committed } });
         return committed;
-      });
+      }, { timeout: 60000 });
       await finishJob(job.id, 'COMPLETED');
       return NextResponse.json({ claimed: true, jobId: job.id, committed: result, status: 'COMPLETED' });
     }
