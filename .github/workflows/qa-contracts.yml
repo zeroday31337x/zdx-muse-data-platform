@@ -1,0 +1,25 @@
+name: Independent QA contracts
+on:
+  push:
+    paths:
+      - 'tests/qa/**'
+      - 'docs/qa/**'
+      - '.github/workflows/qa-contracts.yml'
+  pull_request:
+    paths:
+      - 'tests/qa/**'
+      - 'docs/qa/**'
+      - '.github/workflows/qa-contracts.yml'
+permissions:
+  contents: read
+jobs:
+  offline-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Offline policy and manifest contracts
+        run: node --test tests/qa/*.test.mjs
