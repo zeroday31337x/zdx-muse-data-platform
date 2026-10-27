@@ -57,7 +57,14 @@ export async function POST() {
           if (!base) break;
           const data = { ...(base.data as Record<string, unknown>) };
           for (const f of ['order_id', 'id', 'record_id']) if (data[f] !== undefined) { data[f] = `SYN-${String(data[f])}-${i}`; break; }
-          const key = `${base.recordKey}-syn${i}`;
+          // Synthetic keys must be unique per job, not just per base
+          // record + index: two augment jobs that both start at i=0
+          // previously upserted the same key, so the second job reported
+          // success without creating a distinct record (and the cap
+          // gate could not arbitrate concurrent jobs). Job id in the
+          // key makes each job's synthetics distinct; a replay of the
+          // SAME job still upserts the same keys (idempotent).
+          const key = `${base.recordKey}-syn-${job.id}-${i}`;
           await tx.record.upsert({ where: { datasetId_recordKey: { datasetId: job.datasetId, recordKey: key } }, update: {}, create: { datasetId: job.datasetId, recordKey: key, data, provenance: 'SYNTHETIC', sourceId: base.sourceId, sourceFamilyId: base.sourceFamilyId, tokens: estimateTokens(data) } });
           committed++;
         }

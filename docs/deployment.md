@@ -28,22 +28,42 @@ npm run build
 # restart the production server on port 3000
 ```
 
-Or run the checked-in script, which does the same steps and refuses on a dirty tree:
+Or run the checked-in script, which does the same steps and refuses on content changes (mode-only changes, e.g. `chmod +x`, do not block it):
 
 ```bash
-./scripts/deploy.sh
+bash scripts/deploy.sh
 ```
 
 The script restarts the server by starting a new `next start` on port 3000 after stopping the old one. It does not delete `data/`.
+
+## Versioning — one version everywhere
+
+The version is the git SHA, nothing else. Check all three the same way:
+
+```bash
+# GitHub main (authoritative)
+git ls-remote https://github.com/zeroday31337x/zdx-muse-data-platform.git main
+# Local checkout
+git -C ~/workspace/zdx-muse-data-platform rev-parse HEAD
+# VPS checkout (over Tailscale)
+ssh ubuntu@100.101.46.77 'git -C ~/zdx-muse-data-platform rev-parse HEAD'
+```
+
+They must all be the same SHA. If they are not, the VPS and local checkouts are behind (or ahead of) main — pull main, do not edit the VPS or push a local-only commit to catch up. A version is continuous only if every step is a commit on main: edit locally, push to GitHub, deploy on the VPS by pulling, record it.
+
+## Deploy history (VPS, outside the repo)
+
+`scripts/deploy.sh` and `scripts/rollback.sh` append every deploy to `~/zdx-deploy-history.jsonl` (append-only, one JSON object per line: timestamp, previous_sha, new_sha, branch, rollback, status) and write the current version to `~/zdx-platform-version.json`. Both files live outside the repo so the working tree stays clean and `deploy.sh`'s dirty-tree refusal keeps working. Runtime data (`data/store.json`) and secrets (`.env`, never in git) are preserved across deploys and rollbacks; they are not versioned with the code.
 
 ## Rollback
 
 ```bash
 cd ~/zdx-muse-data-platform
-git log --oneline -5
-git checkout <previous-commit>   # only to stop a bad deploy; then fix forward on GitHub main
-./scripts/deploy.sh              # after checking out a tagged/known commit, re-pull is skipped by design — see script
+bash scripts/rollback.sh            # rolls back to the previous SHA in deploy history
+bash scripts/rollback.sh <sha>      # or roll back to an explicit previous SHA
 ```
+
+The rollback script verifies the target commit exists, refuses on a dirty tree, rebuilds (install, Prisma generate, typecheck, test, build), restarts on port 3000, health-checks, and records the rollback in deploy history. If the health check fails after a rollback, the server is left running for diagnosis and the script prints the previous SHA — restore from the timestamped tarball backup (`~/zdx-muse-data-platform.tarball-backup-*`) only if the git checkout cannot be recovered.
 
 In practice, prefer fixing forward: revert or fix on GitHub main, push, and deploy again. A VPS-side checkout that is not on main is a temporary incident state, not a new source of truth.
 

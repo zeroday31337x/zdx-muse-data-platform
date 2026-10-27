@@ -5,11 +5,33 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/node/bin:$PATH"
 
-if [ -n "$(git status --porcelain)" ]; then
-  echo "REFUSING: working tree is dirty. VPS must not be edited directly." >&2
+# Refuse on content changes or untracked files, but allow mode-only
+# changes (e.g. chmod +x after a pull): git diff --numstat is empty for
+# mode-only changes, so a mode change alone does not block a deploy.
+if [ -n "$(git diff --numstat)" ] || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+  echo "REFUSING: working tree has content changes. VPS must not be edited directly." >&2
   git status --short >&2
   exit 1
 fi
+
+# Versioning: the deployed version is exactly the git HEAD after this
+# script runs. It is recorded outside the repo (so the tree stays clean)
+# in $HOME/zdx-deploy-history.jsonl (append-only) and
+# $HOME/zdx-platform-version.json (current version only). GitHub main is
+# authoritative; a VPS checkout that is not on main is a temporary
+# incident state, not a new source of truth.
+PREV_SHA="$(git rev-parse HEAD)"
+HISTORY_FILE="$HOME/zdx-deploy-history.jsonl"
+VERSION_FILE="$HOME/zdx-platform-version.json"
+record_deploy() {
+  local new_sha="$1" status="$2" rollback="${3:-false}"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"timestamp":"%s","previous_sha":"%s","new_sha":"%s","branch":"%s","rollback":%s,"status":"%s"}\n' \
+    "$ts" "$PREV_SHA" "$new_sha" "$(git rev-parse --abbrev-ref HEAD)" "$rollback" "$status" >> "$HISTORY_FILE"
+  printf '{"sha":"%s","previous_sha":"%s","timestamp":"%s","rollback":%s,"status":"%s"}\n' \
+    "$new_sha" "$PREV_SHA" "$ts" "$rollback" "$status" > "$VERSION_FILE"
+}
 
 # If DEPLOY_REF is set, it is an incident rollback only — see docs/deployment.md.
 # Normal deploys always pull origin/main.
@@ -41,6 +63,13 @@ fi
 
 setsid npm run start -- -p 3000 > "$HOME/zdx-platform.log" 2>&1 < /dev/null &
 sleep 5
-curl -sf http://localhost:3000/api/health
-echo
-echo "Deployed $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
+if curl -sf http://localhost:3000/api/health > /dev/null; then
+  echo
+  echo "Deployed $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
+  record_deploy "$(git rev-parse HEAD)" "ok" false
+else
+  echo "HEALTH CHECK FAILED after deploy. Server left running for diagnosis." >&2
+  echo "Roll back with: ./scripts/rollback.sh $PREV_SHA" >&2
+  record_deploy "$(git rev-parse HEAD)" "health-failed" false
+  exit 1
+fi
