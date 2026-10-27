@@ -1,4 +1,7 @@
 // Durable job state machine, independent of the browser.
+// tx is intentionally any-typed: the Prisma transaction client is
+// generated at build time (see src/lib/db.ts).
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // - Claim: one worker, one lease, FOR UPDATE SKIP LOCKED, 5-minute lease.
 // - Checkpoint: committed count + last processed index, saved in the same
 //   transaction as the records, so a crash replays from the checkpoint
