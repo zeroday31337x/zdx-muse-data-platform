@@ -14,14 +14,18 @@ export { canTransition, JOB_TRANSITIONS, LEASE_MS } from './worker-transitions';
 
 export async function claimNextJob(workerId: string) {
   const db = prisma();
-  // Reclaim stale leases first.
-  await db.$executeRaw`UPDATE "Job" SET status='QUEUED', "leaseOwner"=NULL, "leaseExpiresAt"=NULL WHERE status='RUNNING' AND "leaseExpiresAt" < NOW()`;
-  const jobs = await db.$queryRaw<{ id: string }[]>`
-    SELECT id FROM "Job" WHERE status='QUEUED' ORDER BY "createdAt" ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
-  if (jobs.length === 0) return null;
-  const leaseExpiresAt = new Date(Date.now() + LEASE_MS);
-  const job = await db.job.update({ where: { id: jobs[0].id }, data: { status: 'RUNNING', leaseOwner: workerId, leaseExpiresAt, attempts: { increment: 1 } } });
-  return job;
+  // Claim inside ONE transaction: the FOR UPDATE SKIP LOCKED row lock
+  // only holds for the transaction's duration, so selecting and then
+  // updating outside a transaction would let two workers claim the
+  // same QUEUED job. Reclaiming stale leases happens in the same
+  // transaction, so a crashed worker's job is re-queued atomically.
+  return db.$transaction(async (tx: any) => {
+    await tx.$executeRaw`UPDATE "Job" SET status='QUEUED', "leaseOwner"=NULL, "leaseExpiresAt"=NULL WHERE status='RUNNING' AND "leaseExpiresAt" < NOW()`;
+    const jobs = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Job" WHERE status='QUEUED' ORDER BY "createdAt" ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
+    if (jobs.length === 0) return null;
+    const leaseExpiresAt = new Date(Date.now() + LEASE_MS);
+    return tx.job.update({ where: { id: jobs[0].id }, data: { status: 'RUNNING', leaseOwner: workerId, leaseExpiresAt, attempts: { increment: 1 } } });
+  });
 }
 
 export async function updateCheckpoint(jobId: string, committed: number, checkpoint: Record<string, unknown>) {
