@@ -231,3 +231,50 @@ export function safeNext(next: string | null | undefined): string {
   if (next.startsWith('/') && !next.startsWith('//')) return next;
   return '/';
 }
+
+/**
+ * Public origin for post-login/logout redirects. NEVER derive this from
+ * the incoming request URL: behind the nginx proxy the app's own
+ * request URL can resolve to its internal origin (localhost:3000),
+ * which is what production users were sent to after a successful
+ * Cognito login. The registered COGNITO_REDIRECT_URI's origin is the
+ * public origin by construction (it must match the Cognito app
+ * client's registered callback exactly). The request origin is only a
+ * fallback for environments where no redirect URI is configured.
+ */
+export function publicOrigin(redirectUri: string | null | undefined, fallbackOrigin: string): string {
+  if (redirectUri) {
+    try {
+      return new URL(redirectUri).origin;
+    } catch {
+      // Malformed redirect URI: fall through to the request origin.
+    }
+  }
+  return fallbackOrigin;
+}
+
+/**
+ * Post-login redirect target. Rules, in order:
+ * - A missing, absolute, or protocol-relative `next` is NOT treated as
+ *   a choice at all: it falls through to the role default. (This is
+ *   stricter than safeNext, whose '/' fallback would otherwise turn
+ *   an invalid next into an affirmative redirect to the homepage.)
+ * - /admin paths are honored ONLY for Cognito admin-group members; a
+ *   regular user with a crafted next=/admin value falls through to
+ *   their role default (/dashboard). Group membership here is a
+ *   routing decision only: it never changes any stored User.role.
+ * - Only real pages are honored: '/', '/dashboard', '/settings', and
+ *   (for admins) '/admin' paths. Anything else (including API routes
+ *   and unknown paths) falls through to the role default.
+ * - Role default: admin-group member → /admin, everyone else → /dashboard.
+ * The returned value is always a same-site path, never localhost and
+ * never an external URL.
+ */
+const SIGNED_IN_PAGES = new Set(['/', '/dashboard', '/settings']);
+export function resolvePostLoginTarget(next: string | null | undefined, isAdmin: boolean): string {
+  const roleDefault = isAdmin ? '/admin' : '/dashboard';
+  if (!next || !next.startsWith('/') || next.startsWith('//')) return roleDefault;
+  if (next === '/admin' || next.startsWith('/admin/')) return isAdmin ? next : roleDefault;
+  if (SIGNED_IN_PAGES.has(next)) return next;
+  return roleDefault;
+}
