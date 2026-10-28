@@ -65,23 +65,27 @@ git checkout -- next-env.d.ts 2>/dev/null || true
 # while the old server kept serving and the new build died EADDRINUSE.
 # So: wait until port 3000 is actually free before starting, then verify
 # the listener after the restart is a new PID, not an old one.
+# port_pids takes the port as $1 and returns ONLY that port's listeners.
+# A previous version omitted the port filter and returned every listener,
+# so a production deploy killed the staging server on port 3001 too.
+# Never drop the ":$1 " filter.
 port_pids() {
-  ss -ltnp 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true
+  ss -ltnp 2>/dev/null | grep ":$1 " | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true
 }
 port_free() {
   ! ss -ltn 2>/dev/null | grep -q ':3000 '
 }
-OLD_PIDS=$(port_pids || true)
+OLD_PIDS=$(port_pids 3000 || true)
 if [ -n "$OLD_PIDS" ]; then
   echo "Stopping old server on port 3000: $OLD_PIDS"
   kill $OLD_PIDS || true
   for _ in $(seq 1 30); do
-    if [ -z "$(port_pids || true)" ] && port_free; then
+    if [ -z "$(port_pids 3000 || true)" ] && port_free; then
       break
     fi
     sleep 1
   done
-  if [ -n "$(port_pids || true)" ] || ! port_free; then
+  if [ -n "$(port_pids 3000 || true)" ] || ! port_free; then
     echo "FAILED: port 3000 still in use after 30s; not starting a new server." >&2
     record_deploy "$(git rev-parse HEAD)" "health-failed" false
     exit 1
@@ -97,7 +101,7 @@ for _ in $(seq 1 30); do
   fi
   sleep 1
 done
-NEW_PIDS=$(port_pids || true)
+NEW_PIDS=$(port_pids 3000 || true)
 STALE_PID=""
 for pid in $NEW_PIDS; do
   for old in $OLD_PIDS; do
