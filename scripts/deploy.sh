@@ -56,24 +56,66 @@ npm run build
 # version so the tree stays clean for the next deploy's dirty check.
 git checkout -- next-env.d.ts 2>/dev/null || true
 
-# Restart production server on port 3000. Match the process name only
-# (pgrep -x), never a full-command-line pattern: a -f pattern can match
-# the invoking shell itself and kill the deploy.
-OLD_PIDS=$(pgrep -x "next-server" || true)
+# Restart production server on port 3000 only. Scope by listening port,
+# never by process name alone: pgrep -x next-server would also match the
+# staging server on port 3001, and a -f pattern can match the invoking
+# shell itself and kill the deploy. The health route returns mode and
+# inference only, no SHA, so a health pass alone cannot prove which
+# build is serving — that is how earlier deploys falsely recorded "ok"
+# while the old server kept serving and the new build died EADDRINUSE.
+# So: wait until port 3000 is actually free before starting, then verify
+# the listener after the restart is a new PID, not an old one.
+port_pids() {
+  ss -ltnp 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true
+}
+port_free() {
+  ! ss -ltn 2>/dev/null | grep -q ':3000 '
+}
+OLD_PIDS=$(port_pids || true)
 if [ -n "$OLD_PIDS" ]; then
-  echo "Stopping old server: $OLD_PIDS"
+  echo "Stopping old server on port 3000: $OLD_PIDS"
   kill $OLD_PIDS || true
-  sleep 2
+  for _ in $(seq 1 30); do
+    if [ -z "$(port_pids || true)" ] && port_free; then
+      break
+    fi
+    sleep 1
+  done
+  if [ -n "$(port_pids || true)" ] || ! port_free; then
+    echo "FAILED: port 3000 still in use after 30s; not starting a new server." >&2
+    record_deploy "$(git rev-parse HEAD)" "health-failed" false
+    exit 1
+  fi
 fi
 
 setsid npm run start -- -p 3000 > "$HOME/zdx-platform.log" 2>&1 < /dev/null &
-sleep 5
-if curl -sf http://localhost:3000/api/health > /dev/null; then
+HEALTH_OK=""
+for _ in $(seq 1 30); do
+  if curl -sf http://localhost:3000/api/health > /dev/null; then
+    HEALTH_OK=1
+    break
+  fi
+  sleep 1
+done
+NEW_PIDS=$(port_pids || true)
+STALE_PID=""
+for pid in $NEW_PIDS; do
+  for old in $OLD_PIDS; do
+    if [ "$pid" = "$old" ]; then
+      STALE_PID="$pid"
+    fi
+  done
+done
+if [ -n "$HEALTH_OK" ] && [ -n "$NEW_PIDS" ] && [ -z "$STALE_PID" ]; then
   echo
-  echo "Deployed $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
+  echo "Deployed $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD) (new server PID: $NEW_PIDS)"
   record_deploy "$(git rev-parse HEAD)" "ok" false
 else
-  echo "HEALTH CHECK FAILED after deploy. Server left running for diagnosis." >&2
+  if [ -n "$STALE_PID" ]; then
+    echo "HEALTH CHECK FAILED: port 3000 is still served by old PID $STALE_PID, not a new build." >&2
+  else
+    echo "HEALTH CHECK FAILED after deploy. Server left running for diagnosis." >&2
+  fi
   echo "Roll back with: bash scripts/rollback.sh $PREV_SHA" >&2
   record_deploy "$(git rev-parse HEAD)" "health-failed" false
   exit 1
