@@ -42,15 +42,145 @@ enum JobStatus {
   FAILED
 }
 
+// Application-derived entitlement (contract §1/§1A). This is NEVER the
+// Stripe verbatim status: Stripe's verbatim status lives in
+// Tenant.stripeSubscriptionStatus and is only ever written from a
+// signature-verified webhook + successful reconciliation fetch.
+enum SubscriptionStatus {
+  legacy
+  restricted
+  trialing
+  active
+  past_due
+  canceled
+  unpaid
+  paused
+  incomplete
+  incomplete_expired
+}
+
 model Tenant {
   id        String    @id @default(cuid())
   name      String
   createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
   users     User[]
   datasets  Dataset[]
   jobs      Job[]
   usage     UsageLedger[]
   audit     AuditLog[]
+  invitations TenantInvitation[]
+  stripeEvents StripeEvent[]
+  spendReservations SpendReservation[]
+  // Stripe (contract §1). subscriptionPlan is an allowlist plan KEY only,
+  // never a client price ID. lastStripeEventAt is an AUDIT TIMESTAMP only
+  // and must never be used as a correctness/reordering guard.
+  stripeCustomerId         String?
+  stripeSubscriptionId     String?             @unique
+  subscriptionStatus       SubscriptionStatus  @default(legacy)
+  subscriptionPlan         String?
+  stripeSubscriptionStatus String?
+  stripePriceId            String?
+  currentPeriodEnd         DateTime?
+  lastStripeEventAt        DateTime?
+  // Tenant model default (model-tier amendment): a single model ID or
+  // null (= tier default). A choice, never an allowlist; validated
+  // against the tier allowlist on write AND on every call.
+  modelPreference          String?
+  contributorEligibility   ContributorEligibility?
+  // Staging fix 2026-10-28: contributorConsents removed — it had no opposite
+  // relation field (Prisma P1012: schema failed validation, no client
+  // generated, all DB routes 500 on staging) and no code references it.
+  // Re-add only with the opposite field + FK migration under Gate 6B.
+  // Compliance batch (20261028040000): grace-restriction layer
+  // (contract §11.9 / B12 revision reading). accessRestriction is a
+  // SEPARATE entitlement restriction — it NEVER overwrites
+  // stripeSubscriptionStatus / subscriptionStatus, which keep the last
+  // VERIFIED Stripe state verbatim. Values: null (no restriction) or
+  // 'GRACE_EXPIRED_UNVERIFIED'. graceStartedAt marks when authoritative
+  // reconciliation last failed; accessRestrictedAt marks when the grace
+  // window expired. Both are cleared on successful reconciliation.
+  accessRestriction        String?
+  accessRestrictedAt       DateTime?
+  graceStartedAt           DateTime?
+  // B4 tenant upload total ledger (migration 20261028050000_upload_ledger,
+  // FILE ONLY — UNAPPLIED to any server database). Cumulative actual UTF-8
+  // bytes of uploaded text ingested by restricted tenants since the
+  // migration; 0 for all rows at migration time (pre-migration uploads are
+  // NOT counted — their byte sizes are not recoverable from stored
+  // records). Enforced by src/lib/upload-quota.ts enforceTotalUpload
+  // against the PROPOSED 50 MB total (not approved policy, not a
+  // commercial quota). Entitled tenants have no total in the contract
+  // row, so the ingest route accumulates restricted uploads only.
+  totalUploadBytes         Int      @default(0)
+  unpaidExportAuthorizations UnpaidExportAuthorization[]
+}
+
+// Compliance batch (20261028040000): one-time unpaid export-out
+// authorization (contract §11.9(a) / B10). Exactly ONE export-out per
+// VERIFIED transition into 'unpaid': created by the webhook/reconcile
+// path when the derived status CHANGES into 'unpaid', with boundaryAt
+// = transition time. Only records with createdAt <= boundaryAt are
+// eligible, enforced at the query level by the export route.
+// Lifecycle: AVAILABLE → CLAIMED (one export in progress, claim token
+// guards completion) → COMPLETED (terminal: no second export).
+// A CLAIMED row older than the claim timeout is treated as an
+// interrupted export and may be reclaimed — retry without permitting
+// a second SUCCESSFUL export. @@unique([tenantId, stripeEventId])
+// guarantees one authorization per transition event.
+model UnpaidExportAuthorization {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  stripeEventId String
+  boundaryAt   DateTime
+  status       String   @default("AVAILABLE")
+  claimToken   String?
+  claimedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+
+  @@unique([tenantId, stripeEventId])
+  @@index([tenantId, status])
+}
+
+// Tenant-level Contributor eligibility (model-tier amendment §2.4).
+// This record is the source of truth; there is intentionally NO
+// Tenant.contributorEligible boolean cache (dual-write conflict
+// resolved in favour of the auditable record). Only a platform
+// operator may grant/revoke, after reviewing attestation evidence.
+model ContributorEligibility {
+  id        String   @id @default(cuid())
+  tenantId  String   @unique
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  eligible  Boolean  @default(false)
+  grantedBy String
+  grantedAt DateTime @default(now())
+  reason    String
+  revokedBy String?
+  revokedAt DateTime?
+
+  @@index([tenantId])
+}
+
+// Dataset-level Contributor consent (model-tier amendment §2.4).
+// Attested by a tenant admin for their OWN dataset only. Attesting
+// consent does NOT grant tenant eligibility and does NOT authorize
+// Contributor by itself. Scope in v1 is 'public-demo-only' only.
+model DatasetContributorConsent {
+  id          String   @id @default(cuid())
+  datasetId   String   @unique
+  dataset     Dataset  @relation(fields: [datasetId], references: [id])
+  tenantId    String
+  consented   Boolean  @default(false)
+  consentedBy String
+  consentedAt DateTime?
+  scope       String   @default("public-demo-only")
+  expiresAt   DateTime?
+  revokedBy   String?
+  revokedAt   DateTime?
+
+  @@index([tenantId, datasetId])
 }
 
 model User {
@@ -58,7 +188,13 @@ model User {
   tenantId     String
   tenant       Tenant    @relation(fields: [tenantId], references: [id])
   email        String    @unique
-  passwordHash String
+  // Nullable: Cognito-only users have no DB password. DB login fails
+  // closed on null/empty passwordHash or authProvider='cognito'.
+  passwordHash String?
+  authProvider String    @default("db")
+  cognitoSub   String?   @unique
+  // Disablement marker, checked on every requireSession. NULL = active.
+  disabledAt   DateTime?
   role         String    @default("member")
   createdAt    DateTime  @default(now())
   sessions     Session[]
@@ -69,8 +205,66 @@ model Session {
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   tokenHash String   @unique
+  provider  String   @default("db")
+  // Record only: a hash cannot refresh or revoke. Raw Cognito refresh
+  // tokens are NEVER stored. v1 sessions simply expire after 7 days.
+  refreshTokenHash String?
   expiresAt DateTime
   createdAt DateTime @default(now())
+}
+
+// Tenant invitation (contract §3b). Raw token is shown ONCE; only the
+// hash is persisted. Role is capped at 'member' by the route.
+model TenantInvitation {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  email     String
+  role      String   @default("member")
+  tokenHash String   @unique
+  status    String   @default("pending")
+  expiresAt DateTime
+  acceptedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// Stripe webhook event dedup (contract §3c). No payload bodies, no full
+// Stripe objects, no secrets stored. processedAt null = stored, not yet
+// applied (e.g. reconciliation fetch failed; Stripe retry resumes it).
+model StripeEvent {
+  id            String   @id @default(cuid())
+  stripeEventId String   @unique
+  tenantId      String?
+  tenant        Tenant?  @relation(fields: [tenantId], references: [id])
+  type          String
+  processedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// Spend reservation (three-way accounting: confirmed vs reserved vs
+// settled-at-maximum). costUsd on UsageLedger stays CONFIRMED cost only;
+// reservation estimates are NEVER written there, and a pending or
+// settled-at-maximum reservation is NEVER presented as verified usage.
+model SpendReservation {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  jobId           String?
+  requestKey      String   @unique
+  model           String
+  maxCostUsd      Float
+  confirmedCostUsd Float?
+  settledCostUsd  Float?
+  // CONFIRMED | RESERVED | PENDING_RECONCILIATION | SETTLED_AT_MAXIMUM
+  status          String   @default("RESERVED")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
 }
 
 model Dataset {
@@ -89,6 +283,7 @@ model Dataset {
   jobs           Job[]
   proposals      SchemaProposal[]
   repairs        RepairCase[]
+  contributorConsent DatasetContributorConsent?
 }
 
 model Record {
@@ -126,6 +321,87 @@ model Job {
   payload       Json?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  // Model resolution record (model-tier amendment §2.5, revised).
+  // INVARIANT: for any Meta-backed job, resolvedModel MUST equal
+  // requestedModel, or resolvedModel is null and no Meta call ran.
+  // A different resolvedModel is a data-integrity violation, never a
+  // normal outcome. Reason set (revised): 'platform-default' |
+  // 'tenant-preference' | 'job-preference' | 'none-deterministic' |
+  // 'rejected'. WITHDRAWN as resolutions: 'data-class-override',
+  // 'tier-fallback', 'budget-fallback' — those are REJECTIONS.
+  requestedModel        String?
+  resolvedModel         String?
+  modelResolutionReason String?
+  modelRejectionCode    String?
+  dataClass             String?
+}
+
+// Platform operator (revised spec §2.2). A SEPARATE principal from
+// tenant User: User.role='admin' never implies global access, and a
+// tenant session is NEVER accepted on /api/admin/*. Operator identity
+// is established only through the Cognito admin group + an MFA event.
+model PlatformOperator {
+  id         String   @id @default(cuid())
+  email      String   @unique
+  cognitoSub String   @unique
+  disabledAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  sessions   PlatformOperatorSession[]
+}
+
+// Operator session (revised §2.2). Separate cookie
+// (zdx_operator_session) and separate table from tenant sessions.
+// mfaVerifiedAt is a RECORD of an authenticated Cognito MFA event
+// (amr in the verified ID token); null means MFA_PENDING, which may
+// call only mfa-status + the MFA redirect. Lifetime is PROPOSED 8h.
+model PlatformOperatorSession {
+  id            String           @id @default(cuid())
+  operatorId    String
+  operator      PlatformOperator @relation(fields: [operatorId], references: [id])
+  tokenHash     String           @unique
+  mfaVerifiedAt DateTime?
+  expiresAt     DateTime
+  createdAt     DateTime         @default(now())
+
+  @@index([operatorId])
+}
+
+// Versioned platform settings (revised §2.5). LOCKED keys are shown
+// read-only and rejected, never silently ignored. Values above the
+// hard ceiling are rejected at write time. Versions are append-only:
+// there is no update/delete route for PlatformSettingVersion.
+model PlatformSetting {
+  key       String   @id
+  value     Json?
+  updatedBy String
+  updatedAt DateTime @updatedAt
+}
+
+model PlatformSettingVersion {
+  id        String   @id @default(cuid())
+  key       String
+  value     Json?
+  changedBy String
+  changedAt DateTime @default(now())
+  note      String?
+
+  @@index([key, changedAt])
+}
+
+// Platform audit log (revised §2.6). Operator actions affecting a
+// tenant are dual-written here AND to that tenant's AuditLog with
+// actor 'platform-operator:<id>'. Append-only: no delete route.
+model PlatformAuditLog {
+  id        String   @id @default(cuid())
+  actor     String
+  action    String
+  entity    String
+  tenantId  String?
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
 }
 
 model UsageLedger {
@@ -136,8 +412,21 @@ model UsageLedger {
   purpose          String
   promptTokens     Int      @default(0)
   completionTokens Int      @default(0)
+  // CONFIRMED cost only. Reservation estimates and settled-at-maximum
+  // figures live in SpendReservation, never here.
   costUsd          Float    @default(0)
   createdAt        DateTime @default(now())
+  // Model-tier amendment §2.6 additive fields. planSnapshot is a plan
+  // key + tier at call time, never a price ID. contributorConsentId
+  // is set only for Contributor calls (the consent row that
+  // authorized it); null for every non-Contributor call. Invariant:
+  // for a Meta-backed job, UsageLedger.model must equal
+  // Job.resolvedModel; a mismatch is an ops-review flag.
+  jobId              String?
+  datasetId          String?
+  dataClass          String?
+  planSnapshot       String?
+  contributorConsentId String?
 }
 
 model AuditLog {

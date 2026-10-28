@@ -6,6 +6,10 @@ import { compositionReport, maxSyntheticForAuthentic } from '@/lib/composition';
 import { dbConfigured, prisma } from '@/lib/db';
 import { requireSession, isSessionResult, datasetForTenant, compositionDb } from '@/lib/authz';
 import { checkCompositionInTx } from '@/lib/composition-db';
+import { entitlementGate, checkConcurrency, graceRestrictionActive } from '@/lib/billing';
+import { recordCapForTenant } from '@/lib/tier-spec';
+import { ensureGraceRestriction } from '@/lib/grace';
+import { checkRequestRate } from '@/lib/rate-limit';
 export const dynamic = 'force-dynamic';
 const schema = z.object({ count: z.number().int().min(1).max(10000) });
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -19,6 +23,30 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const ds = await datasetForTenant(id, s.user.tenantId);
     if (!ds) return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
     const db = prisma();
+    // Compliance correction: the augment route previously had NO
+    // entitlement gate and NO concurrency check, so a canceled /
+    // unpaid / paused tenant could create template augment jobs
+    // synchronously (the worker claim path never saw them, because
+    // the route completes inline). Entitlement (402) and grace
+    // restriction (402) are now enforced here, before any work, and
+    // creation-time concurrency (429) counts QUEUED + RUNNING jobs
+    // against the PROPOSED safety caps (1 restricted / 2 entitled).
+    // Approved per-tier concurrency caps are a BLOCKED input.
+    let tenant = await db.tenant.findUnique({ where: { id: s.user.tenantId } });
+    if (!tenant) return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
+    const gate = entitlementGate(tenant.subscriptionStatus as string, 'augment_template');
+    if (!gate.allowed) return NextResponse.json({ error: gate.code, status: tenant.subscriptionStatus }, { status: 402 });
+    tenant = await ensureGraceRestriction(db, tenant);
+    if (graceRestrictionActive(tenant)) {
+      return NextResponse.json({ error: 'ENTITLEMENT_REQUIRED', status: tenant.subscriptionStatus, restriction: 'GRACE_EXPIRED_UNVERIFIED' }, { status: 402 });
+    }
+    // Request rate (B2, PROPOSED values): 401 → 404 → 402 → 429 order.
+    if (checkRequestRate(req, s.user.tenantId).limited) return NextResponse.json({ error: 'RATE_LIMITED' }, { status: 429 });
+    const restricted = tenant.subscriptionStatus === 'restricted' || tenant.subscriptionStatus === 'incomplete' || tenant.subscriptionStatus === 'incomplete_expired';
+    const activeJobs = await db.job.count({ where: { tenantId: tenant.id, status: { in: ['QUEUED', 'RUNNING'] } } });
+    if (!checkConcurrency(activeJobs, restricted).ok) {
+      return NextResponse.json({ error: 'CONCURRENCY_LIMIT', activeJobs }, { status: 429 });
+    }
     // Pre-check (fast fail) — the transaction below re-checks under
     // the dataset lock, so concurrent requests cannot both pass.
     if (ds.purpose === 'training') {
@@ -29,6 +57,20 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       }
       if (comp0.authentic === 0) return NextResponse.json({ error: 'NO_AUTHENTIC_RECORDS', message: 'Augmentation requires verified authentic records to stay within the 30% cap.' }, { status: 409 });
     }
+    // Record-cap pre-check (tier spec, PROPOSED values): the tenant's
+    // total after this augment must stay within the cap. Previously this
+    // route had NO record-cap check at all, so synthetic records could
+    // push a tenant past its tier cap. The pre-check is re-verified
+    // inside the transaction below (a cap change or concurrent augment
+    // between the two checks must not let the tenant overshoot). The
+    // count is tenant-wide: caps are per tenant, not per dataset.
+    const cap = recordCapForTenant(tenant);
+    if (cap !== null) {
+      const tenantTotal = await db.record.count({ where: { dataset: { tenantId: s.user.tenantId } } });
+      if (tenantTotal + parsed.data.count > cap) {
+        return NextResponse.json({ error: 'QUOTA_EXCEEDED', recordLimit: cap, recordLimitStatus: 'PROPOSED', tenantTotal }, { status: 409 });
+      }
+    }
     const job = await db.job.create({ data: { datasetId: id, tenantId: s.user.tenantId, kind: 'augment', status: 'QUEUED', total: parsed.data.count, payload: { count: parsed.data.count } } });
     // Run the augment transaction (same gate + createMany as the worker).
     try {
@@ -36,6 +78,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       const result = await db.$transaction(async (tx: any) => {
         const check = await checkCompositionInTx(tx, id, parsed.data.count);
         if (!check.ok) throw new Error('SYNTHETIC_CAP_EXCEEDED');
+        // In-transaction record-cap re-check (tier spec, PROPOSED values):
+        // the pre-check above can race concurrent augments, so the cap is
+        // re-verified here, tenant-wide, before any insert.
+        const txCap = recordCapForTenant(tenant);
+        if (txCap !== null) {
+          const totalNow = await tx.record.count({ where: { dataset: { tenantId: s.user.tenantId } } });
+          if (totalNow + parsed.data.count > txCap) throw new Error('QUOTA_EXCEEDED');
+        }
         const authentic = await tx.record.findMany({ where: { datasetId: id, provenance: 'AUTHENTIC_VERIFIED' }, take: parsed.data.count });
         const rows = [];
         for (let i = 0; i < parsed.data.count; i++) {
@@ -50,12 +100,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         return inserted.count;
       }, { timeout: 60000 });
       const comp = await compositionDb(id);
-      return NextResponse.json({ jobId: job.id, committed: result, status: 'COMPLETED', composition: comp, compositionReport: compositionReport(comp), generator: 'template-demo', note: 'Synthetic records are template variations, labelled SYNTHETIC. Meta semantic generation is used only when MODEL_API_KEY is configured and the route is upgraded to call Meta; cap enforcement is the same.' });
+      return NextResponse.json({ jobId: job.id, committed: result, status: 'COMPLETED', composition: comp, compositionReport: compositionReport(comp), generator: 'template-demo', note: 'Synthetic records are template variations, labelled SYNTHETIC. Meta-backed augment is DISABLED pending separate Option A authorization; this route always returns template records.' });
     } catch (e) {
       await db.job.update({ where: { id: job.id }, data: { status: 'FAILED', error: e instanceof Error ? e.message : 'WORKER_ERROR' } });
       if (e instanceof Error && e.message === 'SYNTHETIC_CAP_EXCEEDED') {
         const comp = await compositionDb(id);
         return NextResponse.json({ error: 'SYNTHETIC_CAP_EXCEEDED', jobId: job.id, authentic: comp.authentic, synthetic: comp.synthetic, allowed: maxSyntheticForAuthentic(comp.authentic), requested: parsed.data.count, remaining: Math.max(0, maxSyntheticForAuthentic(comp.authentic) - comp.synthetic) }, { status: 409 });
+      }
+      if (e instanceof Error && e.message === 'QUOTA_EXCEEDED') {
+        const comp = await compositionDb(id);
+        return NextResponse.json({ error: 'QUOTA_EXCEEDED', jobId: job.id, recordLimitStatus: 'PROPOSED', composition: comp }, { status: 409 });
       }
       return NextResponse.json({ error: 'AUGMENT_FAILED', jobId: job.id, message: e instanceof Error ? e.message : 'failed' }, { status: 500 });
     }
@@ -89,5 +143,5 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   job.committed = committed; job.updatedAt = new Date().toISOString();
   saveStore(s);
   const comp = compositionOf(s, id);
-  return NextResponse.json({ committed, composition: comp, compositionReport: compositionReport(comp), generator: 'template-demo', note: 'Synthetic records are template variations, labelled SYNTHETIC. Meta semantic generation is used only when MODEL_API_KEY is configured and the route is upgraded to call Meta; cap enforcement is the same.' });
+  return NextResponse.json({ committed, composition: comp, compositionReport: compositionReport(comp), generator: 'template-demo', note: 'Synthetic records are template variations, labelled SYNTHETIC. Meta-backed augment is DISABLED pending separate Option A authorization; this route always returns template records.' });
 }

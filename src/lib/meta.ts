@@ -69,6 +69,13 @@ export async function callMetaChat(opts: {
   messages: { role: string; content: string }[];
   dataClass: string;
   timeoutMs?: number;
+  /**
+   * Maximum completion tokens for this call (sent as max_tokens).
+   * Callers that reserve spend MUST pass this: it makes the call's
+   * maximum cost finite, which is what the reservation checks against.
+   * Unbounded calls cannot be reserved and must not run under a budget.
+   */
+  maxOutputTokens?: number;
 }): Promise<MetaCallResult> {
   const { model, messages, dataClass } = opts;
   if (!isModelAllowed(model)) {
@@ -91,7 +98,7 @@ export async function callMetaChat(opts: {
     const res = await fetch(`${META_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model, messages }),
+      body: JSON.stringify({ model, messages, ...(opts.maxOutputTokens !== undefined ? { max_tokens: opts.maxOutputTokens } : {}) }),
       signal: controller.signal,
     });
     const text = await res.text();
@@ -99,7 +106,15 @@ export async function callMetaChat(opts: {
       const kind = res.status === 401 || res.status === 403 ? 'AUTH_OR_ENTITLEMENT' : res.status === 402 ? 'BILLING' : res.status === 429 ? 'RATE_LIMIT' : res.status >= 500 ? 'PROVIDER_5XX' : 'INVALID_REQUEST';
       return { ok: false, model, content: null, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, estimatedCostUsd: 0, error: `${kind}:${res.status}`, status: res.status };
     }
-    const parsed = chatResponseSchema.safeParse(JSON.parse(text));
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      // Malformed provider output is a validation failure, NOT a network
+      // error: misclassifying it would make retries hide a bad response.
+      return { ok: false, model, content: null, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, estimatedCostUsd: 0, error: 'INVALID_PROVIDER_RESPONSE' };
+    }
+    const parsed = chatResponseSchema.safeParse(json);
     if (!parsed.success) {
       return { ok: false, model, content: null, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, estimatedCostUsd: 0, error: 'INVALID_PROVIDER_RESPONSE' };
     }

@@ -13,7 +13,7 @@ const SAMPLE_CSV = `order_id,customer,product,amount
 1007,Frank,Backpack,59.00`;
 
 type Job = { id: string; datasetId: string; kind: string; status: string; committed: number; total: number; error?: string | null };
-type Me = { authenticated: boolean; mode?: string; user?: { email: string; tenantId: string } };
+type Me = { authenticated: boolean; mode?: string; user?: { email: string; tenantId: string; role?: string; provider?: string } };
 type RepairCase = { id: string; recordId: string; issue: string; status: string; repairedData?: unknown };
 
 function jobPill(status: string): string {
@@ -33,6 +33,8 @@ export default function Home() {
   const [augmentCount, setAugmentCount] = useState(2);
   const [exportText, setExportText] = useState('');
   const [me, setMe] = useState<Me | null>(null);
+  const [billing, setBilling] = useState<Record<string, unknown> | null>(null);
+  const [accountModels, setAccountModels] = useState<Record<string, unknown> | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -48,6 +50,12 @@ export default function Home() {
   };
   const loadMe = async () => {
     const r = await fetch('/api/auth/me'); const j = await r.json().catch(() => ({})); setMe(j);
+    if (j?.authenticated) {
+      const br = await fetch('/api/billing/subscription'); const bj = await br.json().catch(() => null);
+      setBilling(bj && typeof bj === 'object' ? bj : null);
+      const mr = await fetch('/api/account/models'); const mj = await mr.json().catch(() => null);
+      setAccountModels(mj && typeof mj === 'object' ? mj : null);
+    } else { setBilling(null); setAccountModels(null); }
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadMe(); load(); }, []);
@@ -87,10 +95,55 @@ export default function Home() {
             <button className="btn btn-primary" onClick={async () => { const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) }); const j = await r.json().catch(() => ({})); setMsg(`Login: ${r.status} ${JSON.stringify(j).slice(0, 300)}`); await loadMe(); await load(); }}>Sign in</button>
           </span>
         ) : null}
+        {me && !me.authenticated && me.mode !== 'demo-no-db' ? (
+          <span className="formrow" style={{ marginTop: 0 }}>
+            <a className="btn" href="/api/auth/cognito?mode=login">Sign in with Cognito</a>
+            <a className="btn btn-primary" href="/api/auth/cognito?mode=signup">Create account</a>
+          </span>
+        ) : null}
         {me?.authenticated ? (
-          <button className="btn" onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }); setMe(null); await loadMe(); }}>Sign out</button>
+          <button className="btn" onClick={async () => { const r = await fetch('/api/auth/logout', { method: 'POST' }); const j = await r.json().catch(() => ({})); setMe(null); setBilling(null); if (j?.cognitoLogoutUrl) { window.location.href = j.cognitoLogoutUrl; } else { await loadMe(); } }}>Sign out</button>
         ) : null}
       </div>
+
+      {me?.authenticated ? (
+        <section className="card">
+          <h2>Billing — subscription (test mode)</h2>
+          <p>Test mode only; production charging is disabled. Checkout never grants access by itself — access follows a verified Stripe webhook + reconciliation. The success page re-reads the subscription state below.</p>
+          <p>
+            Status: <strong>{String(billing?.status ?? '…')}</strong>
+            {billing?.plan ? ` · Plan: ${String(billing.plan)}` : ''}
+            {billing?.currentPeriodEnd ? ` · Current period ends: ${String(billing.currentPeriodEnd)}` : ''}
+          </p>
+          <div className="formrow">
+            {me.user?.role === 'admin' && billing?.checkoutEligible ? (
+              <button className="btn btn-primary" onClick={async () => { const r = await fetch('/api/billing/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ priceKey: 'basic' }) }); const j = await r.json().catch(() => ({})); if (j?.url) { window.location.href = j.url; } else { setMsg(`Checkout: ${r.status} ${JSON.stringify(j).slice(0, 300)}`); } }}>Subscribe — Basic</button>
+            ) : null}
+            {me.user?.role === 'admin' && billing?.portalEligible ? (
+              <button className="btn" onClick={async () => { const r = await fetch('/api/billing/portal', { method: 'POST' }); const j = await r.json().catch(() => ({})); if (j?.url) { window.location.href = j.url; } else { setMsg(`Portal: ${r.status} ${JSON.stringify(j).slice(0, 300)}`); } }}>Manage billing (portal)</button>
+            ) : null}
+            <button className="btn" onClick={async () => { await loadMe(); }}>Refresh subscription</button>
+          </div>
+        </section>
+      ) : null}
+
+      {me?.authenticated && accountModels ? (
+        <section className="card">
+          <h2>Models — your tier</h2>
+          <p>Allowed text models: <strong>{Array.isArray(accountModels.allowedModels) ? '' : ((accountModels.allowedModels as Record<string, unknown>)?.text as string[] | undefined)?.join(', ') ?? '—'}</strong> · Default: <strong>{String(accountModels.defaultModel ?? '—')}</strong> · Your preference: <strong>{String(accountModels.tenantPreference ?? 'tier default')}</strong> · Contributor eligible: <strong>{accountModels.contributorEligible ? 'yes' : 'no'}</strong></p>
+          <p>Contributor is used only for public data with tenant eligibility and per-dataset consent. A rejected model is never silently replaced — the result is labelled deterministic, not a Meta result.</p>
+          {me.user?.role === 'admin' ? (
+            <div className="formrow">
+              <label className="field">Model preference
+                <select className="input" value={String(accountModels.tenantPreference ?? '')} onChange={async (e) => { const model = e.target.value || null; const r = await fetch('/api/account/model-preference', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) }); const j = await r.json().catch(() => ({})); if (r.ok) { await loadMe(); } else { setMsg(`Model preference: ${r.status} ${JSON.stringify(j).slice(0, 300)}`); } }}>
+                  <option value="">Tier default</option>
+                  {((accountModels.allowedModels as Record<string, unknown>)?.text as string[] | undefined)?.map((m) => (<option key={m} value={m}>{m}</option>))}
+                </select>
+              </label>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="card">
         <h2>1. Create dataset</h2>

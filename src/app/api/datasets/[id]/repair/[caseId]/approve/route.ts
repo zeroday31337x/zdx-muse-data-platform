@@ -2,6 +2,8 @@
 import { NextResponse } from 'next/server';
 import { dbConfigured, prisma } from '@/lib/db';
 import { requireSession, isSessionResult, datasetForTenant } from '@/lib/authz';
+import { entitlementGate, graceRestrictionActive } from '@/lib/billing';
+import { ensureGraceRestriction } from '@/lib/grace';
 export const dynamic = 'force-dynamic';
 export async function POST(req: Request, ctx: { params: Promise<{ id: string; caseId: string }> }) {
   const { id, caseId } = await ctx.params;
@@ -11,6 +13,16 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string; ca
   const ds = await datasetForTenant(id, s.user.tenantId);
   if (!ds) return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
   const db = prisma();
+  // Approval mutates tenant data (it applies repairedData to a record), so
+  // it is gated as new local work: denied for canceled/unpaid/paused
+  // tenants and under grace expiry, like ingest. (Reject stays
+  // owner-allowed: it only declines a case and changes no tenant data.)
+  const tenant = await db.tenant.findUnique({ where: { id: s.user.tenantId } });
+  if (!tenant) return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
+  const gate = entitlementGate(tenant.subscriptionStatus as string, 'ingest');
+  if (!gate.allowed) return NextResponse.json({ error: gate.code, status: tenant.subscriptionStatus }, { status: 402 });
+  const graceTenant = await ensureGraceRestriction(db, tenant);
+  if (graceRestrictionActive(graceTenant)) return NextResponse.json({ error: 'ENTITLEMENT_REQUIRED', status: tenant.subscriptionStatus, restriction: 'GRACE_EXPIRED_UNVERIFIED' }, { status: 402 });
   const c = await db.repairCase.findFirst({ where: { id: caseId, datasetId: id } });
   if (!c || c.status !== 'open') return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
   if (!c.repairedData) return NextResponse.json({ error: 'NO_REPAIRED_DATA', message: 'Case has no repairedData to apply.' }, { status: 409 });

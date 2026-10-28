@@ -16,7 +16,7 @@ import crypto from 'node:crypto';
 import { getSessionFromCookie } from './auth';
 import { dbConfigured, prisma } from './db';
 
-export type SessionUser = { id: string; email: string; tenantId: string; role: string };
+export type SessionUser = { id: string; email: string; tenantId: string; role: string; provider: 'db' | 'cognito' };
 
 export async function requireSession(req: Request): Promise<{ user: SessionUser } | { response: Response }> {
   if (!dbConfigured()) {
@@ -26,7 +26,16 @@ export async function requireSession(req: Request): Promise<{ user: SessionUser 
   if (!session) {
     return { response: NextResponse.json({ error: 'UNAUTHENTICATED' }, { status: 401 }) };
   }
-  return { user: { id: session.user.id, email: session.user.email, tenantId: session.user.tenantId, role: session.user.role } };
+  return { user: { id: session.user.id, email: session.user.email, tenantId: session.user.tenantId, role: session.user.role, provider: session.provider === 'cognito' ? 'cognito' : 'db' } };
+}
+
+/** Tenant-admin gate: same tenant + role 'admin'. Cross-tenant = 404. */
+export async function requireTenantAdmin(req: Request, tenantId: string): Promise<{ user: SessionUser } | { response: Response }> {
+  const s = await requireSession(req);
+  if (!('user' in s)) return s;
+  if (s.user.tenantId !== tenantId) return { response: NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 }) };
+  if (s.user.role !== 'admin') return { response: NextResponse.json({ error: 'FORBIDDEN' }, { status: 403 }) };
+  return s;
 }
 
 export function isSessionResult(v: { user: SessionUser } | { response: Response }): v is { user: SessionUser } {

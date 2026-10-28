@@ -26,8 +26,21 @@
 //   claim picks up as QUEUED.
 import { prisma } from './db';
 import { canTransition, LEASE_MS } from './worker-transitions';
+import { checkConcurrency } from './billing';
 export { canTransition, JOB_TRANSITIONS, LEASE_MS } from './worker-transitions';
 
+/**
+ * Per-tenant concurrency at claim time (contract §3e / corrected error
+ * table): a tenant already at its RUNNING cap does NOT get a new job
+ * claimed — the job stays QUEUED (never FAILED) for a later tick.
+ * Candidates are locked with FOR UPDATE SKIP LOCKED, so concurrent
+ * workers cannot claim the same job and cannot both pass the same
+ * tenant's cap check: the count is read after the row lock, inside
+ * the same transaction that performs the claim. Caps are the PROPOSED
+ * VPS safety values (1 restricted / 2 entitled); approved per-tier
+ * concurrency caps are a BLOCKED input and must not be confused with
+ * these safety limits.
+ */
 export async function claimNextJob(workerId: string) {
   const db = prisma();
   // Claim inside ONE transaction: the FOR UPDATE SKIP LOCKED row lock
@@ -38,10 +51,19 @@ export async function claimNextJob(workerId: string) {
   return db.$transaction(async (tx: any) => {
     await tx.$executeRaw`UPDATE "Job" SET status='QUEUED', "leaseOwner"=NULL, "leaseExpiresAt"=NULL WHERE status='RUNNING' AND "leaseExpiresAt" < NOW()`;
     await tx.$executeRaw`UPDATE "Job" SET status='CANCELLED', "leaseOwner"=NULL, "leaseExpiresAt"=NULL WHERE status='CANCELLING' AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" < NOW())`;
-    const jobs = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Job" WHERE status='QUEUED' ORDER BY "createdAt" ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
-    if (jobs.length === 0) return null;
-    const leaseExpiresAt = new Date(Date.now() + LEASE_MS);
-    return tx.job.update({ where: { id: jobs[0].id }, data: { status: 'RUNNING', leaseOwner: workerId, leaseExpiresAt, attempts: { increment: 1 } } });
+    const jobs = await tx.$queryRaw<{ id: string; tenantId: string }[]>`SELECT id, "tenantId" FROM "Job" WHERE status='QUEUED' ORDER BY "createdAt" ASC LIMIT 20 FOR UPDATE SKIP LOCKED`;
+    for (const candidate of jobs) {
+      const tenant = await tx.tenant.findUnique({ where: { id: candidate.tenantId } });
+      // Orphaned job (tenant row gone): leave QUEUED for operator
+      // review; never claim work for a tenant that cannot be gated.
+      if (!tenant) continue;
+      const restricted = tenant.subscriptionStatus === 'restricted' || tenant.subscriptionStatus === 'incomplete' || tenant.subscriptionStatus === 'incomplete_expired';
+      const running = await tx.job.count({ where: { tenantId: candidate.tenantId, status: 'RUNNING' } });
+      if (!checkConcurrency(running, restricted).ok) continue; // stays QUEUED
+      const leaseExpiresAt = new Date(Date.now() + LEASE_MS);
+      return tx.job.update({ where: { id: candidate.id }, data: { status: 'RUNNING', leaseOwner: workerId, leaseExpiresAt, attempts: { increment: 1 } } });
+    }
+    return null;
   });
 }
 

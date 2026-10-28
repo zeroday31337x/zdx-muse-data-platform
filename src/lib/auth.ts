@@ -33,6 +33,10 @@ export async function getSessionFromCookie(cookieHeader: string | null) {
   const tokenHash = crypto.createHash('sha256').update(decodeURIComponent(match[1])).digest('hex');
   const session = await prisma().session.findUnique({ where: { tokenHash }, include: { user: true } });
   if (!session || session.expiresAt < new Date()) return null;
+  // Disablement is checked on EVERY session use: a disabled user's
+  // already-issued sessions stop working immediately, not at expiry.
+  // Role is likewise read from the DB on every use (see authz).
+  if (session.user?.disabledAt) return null;
   return session;
 }
 

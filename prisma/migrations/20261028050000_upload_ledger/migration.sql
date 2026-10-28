@@ -1,0 +1,19 @@
+-- B4 tenant upload total ledger (contract §3e, row B4: PROPOSED 50 MB total
+-- uploads per restricted tenant — PROPOSED value, NOT approved policy and
+-- NOT a commercial quota).
+-- ADDITIVE ONLY. NOT APPLIED to any server database by this commit;
+-- execution requires the per-migration Gate 6B-style pre-execution review
+-- in agent_notes/migration-review-packages-gate-6ab-7ab.md (6B-050000) plus
+-- the separate execution approval, and the Gate 6A append note for this
+-- column. No column is dropped, renamed, or backfilled with computed data.
+-- A single INTEGER column with a constant DEFAULT: PostgreSQL does not
+-- rewrite the table for this ALTER (constant default, PG 11+); existing
+-- rows read 0, so old code keeps reading/writing the table during a
+-- rolling deploy.
+-- LIMITATION (recorded, not hidden): the ledger starts at 0 at migration
+-- time. Uploads ingested before this migration are NOT counted — their
+-- byte sizes are not recoverable from stored records (records store
+-- parsed JSON + checksum, not uploaded text byte count). The 50 MB total
+-- therefore counts post-migration uploads only.
+-- AlterTable Tenant: upload-total ledger for B4 enforcement.
+ALTER TABLE "Tenant" ADD COLUMN "totalUploadBytes" INTEGER NOT NULL DEFAULT 0;
