@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { dbConfigured, prisma } from '@/lib/db';
 import {
   getCognitoConfig, exchangeCode, verifyIdToken, readCookie,
-  clearFlowCookie, publicOrigin, resolvePostLoginTarget,
+  clearFlowCookie, safeNext,
 } from '@/lib/cognito';
 import { newSessionToken, sessionCookie } from '@/lib/auth';
 import { clientIpFromHeaders, globalRegistrationTracker } from '@/lib/rate-limit';
@@ -178,12 +178,7 @@ export async function GET(req: Request) {
       const retry = await db.user.findUnique({ where: { cognitoSub: claims.sub } });
       if (retry) {
         await db.session.create({ data: { userId: retry.id, tokenHash, provider: 'cognito', expiresAt } });
-        // Redirect against the PUBLIC origin (from the registered
-        // callback URI), never req url.origin: behind the proxy the
-        // request origin can be the app's internal localhost:3000.
-        // Forwarding is by verified ID-token group only; it never
-        // changes the stored User.role or the provisioning rules above.
-        const res = NextResponse.redirect(new URL(resolvePostLoginTarget(nextCookie, (claims.groups ?? []).includes(cfg.adminGroup)), publicOrigin(cfg.redirectUri, url.origin)).toString());
+        const res = NextResponse.redirect(new URL(safeNext(nextCookie), url.origin).toString());
         res.headers.set('Set-Cookie', sessionCookie(token));
         res.headers.append('Set-Cookie', clearFlowCookie('zdx_cognito_state'));
         res.headers.append('Set-Cookie', clearFlowCookie('zdx_cognito_nonce'));
@@ -194,8 +189,7 @@ export async function GET(req: Request) {
     }
     return clearCookies();
   }
-  // Same public-origin + group-based forwarding as the retry path above.
-  const res = NextResponse.redirect(new URL(resolvePostLoginTarget(nextCookie, (claims.groups ?? []).includes(cfg.adminGroup)), publicOrigin(cfg.redirectUri, url.origin)).toString());
+  const res = NextResponse.redirect(new URL(safeNext(nextCookie), url.origin).toString());
   res.headers.set('Set-Cookie', sessionCookie(token));
   res.headers.append('Set-Cookie', clearFlowCookie('zdx_cognito_state'));
   res.headers.append('Set-Cookie', clearFlowCookie('zdx_cognito_nonce'));

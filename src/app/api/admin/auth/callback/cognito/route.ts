@@ -11,7 +11,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { dbConfigured, prisma } from '@/lib/db';
-import { getCognitoConfig, exchangeCode, verifyIdToken, readCookie, clearFlowCookie, publicOrigin, resolvePostLoginTarget } from '@/lib/cognito';
+import { getCognitoConfig, exchangeCode, verifyIdToken, readCookie, clearFlowCookie, safeNext } from '@/lib/cognito';
 import { OPERATOR_ADMIN_GROUP, mintOperatorSession, operatorSessionCookie, operatorMfaVerifiedFromClaims, operatorAudit } from '@/lib/operator-auth';
 export const dynamic = 'force-dynamic';
 function timingSafeEqualStr(a: string, b: string): boolean {
@@ -59,10 +59,7 @@ export async function GET(req: Request) {
     const mfaVerified = operatorMfaVerifiedFromClaims(claims);
     const { raw } = await mintOperatorSession(operator.id, mfaVerified);
     await operatorAudit(db, { operatorId: operator.id, action: mfaVerified ? 'OPERATOR_LOGIN_MFA' : 'OPERATOR_LOGIN_MFA_PENDING', entity: `PlatformOperator:${operator.id}` });
-    // Public origin, not req url.origin (same localhost:3000 trap as the
-    // tenant callback). Operators default to /admin; a next value is
-    // honored only if it is a real page path.
-    const res = NextResponse.redirect(new URL(resolvePostLoginTarget(nextCookie, true), publicOrigin(cfg.redirectUri, url.origin)).toString());
+    const res = NextResponse.redirect(new URL(safeNext(nextCookie), url.origin).toString());
     res.headers.append('Set-Cookie', operatorSessionCookie(raw));
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_op_state'));
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_op_nonce'));

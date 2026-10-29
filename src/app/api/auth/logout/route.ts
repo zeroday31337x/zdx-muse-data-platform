@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { clearSessionCookie, getSessionFromCookie } from '@/lib/auth';
 import { dbConfigured, prisma } from '@/lib/db';
-import { getCognitoConfig, buildCognitoLogoutUrl, publicOrigin } from '@/lib/cognito';
+import { getCognitoConfig, buildCognitoLogoutUrl } from '@/lib/cognito';
 export const dynamic = 'force-dynamic';
 
 // Security fix (contract §2): logout DELETES the DB session row, then
@@ -19,10 +19,7 @@ export async function POST(req: Request) {
           const cfg = getCognitoConfig();
           const res = NextResponse.json({
             ok: true,
-            // logout_uri must be a REGISTERED Cognito logout URL, so it
-            // must use the public origin, never the proxied request
-            // origin (localhost:3000 would be rejected by Cognito).
-            cognitoLogoutUrl: cfg ? buildCognitoLogoutUrl(cfg, `${publicOrigin(cfg.redirectUri, new URL(req.url).origin)}/`) : null,
+            cognitoLogoutUrl: cfg ? buildCognitoLogoutUrl(cfg, `${new URL(req.url).origin}/`) : null,
           });
           res.headers.set('Set-Cookie', clearSessionCookie());
           return res;
