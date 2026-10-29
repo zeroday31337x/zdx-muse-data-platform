@@ -155,7 +155,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const gate = await resolveMetaCall(db, { tenant, datasetId: id, dataClass });
     let metaAllowed = gate.resolution.ok;
     let reservation: { reservationId: string } | null = null;
-    let resolvedModel: string | null = gate.resolution.ok ? gate.resolution.model : null;
+    const resolvedModel: string | null = gate.resolution.ok ? gate.resolution.model : null;
     if (metaAllowed && metaConfigured() && resolvedModel) {
       const ceiling = hardCeilingStatus();
       const allowance = allowanceCapForTenant(tenant);
