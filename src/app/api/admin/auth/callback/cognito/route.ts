@@ -11,7 +11,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { dbConfigured, prisma } from '@/lib/db';
-import { getCognitoConfig, exchangeCode, verifyIdToken, readCookie, clearFlowCookie, publicOrigin, resolvePostLoginTarget } from '@/lib/cognito';
+import { getCognitoConfig, exchangeCode, verifyIdToken, readCookie, clearFlowCookie, publicOrigin, resolvePostLoginTarget, authFailedResponse } from '@/lib/cognito';
 import { OPERATOR_ADMIN_GROUP, mintOperatorSession, operatorSessionCookie, operatorMfaVerifiedFromClaims, operatorAudit } from '@/lib/operator-auth';
 export const dynamic = 'force-dynamic';
 function timingSafeEqualStr(a: string, b: string): boolean {
@@ -34,7 +34,12 @@ export async function GET(req: Request) {
   const verifierCookie = readCookie(cookieHeader, 'zdx_op_verifier');
   const nextCookie = readCookie(cookieHeader, 'zdx_op_next');
   const fail = (status: number, error: string) => {
-    const res = NextResponse.json({ error }, { status });
+    // Generic failures get the retry page (no provider detail); the
+    // specific OPERATOR_NOT_AUTHORIZED / OPERATOR_DISABLED responses
+    // stay JSON so the /admin page states can distinguish them.
+    const res = (status === 400 && error === 'AUTHENTICATION_FAILED')
+      ? authFailedResponse('/api/admin/auth/cognito?next=/admin', 'Try operator sign-in again →')
+      : NextResponse.json({ error }, { status });
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_op_state'));
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_op_nonce'));
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_op_verifier'));
@@ -44,8 +49,9 @@ export async function GET(req: Request) {
   if (!code || !state || !stateCookie || !timingSafeEqualStr(state, stateCookie) || !verifierCookie) {
     return fail(400, 'AUTHENTICATION_FAILED');
   }
+  if (!cfg.operatorRedirectUri) return fail(503, 'OPERATOR_NOT_CONFIGURED');
   try {
-    const tokens = await exchangeCode(cfg, code, verifierCookie);
+    const tokens = await exchangeCode(cfg, code, verifierCookie, undefined, cfg.operatorRedirectUri);
     const claims = await verifyIdToken(tokens.idToken, { issuer: cfg.issuer, clientId: cfg.clientId, nonce: nonceCookie ?? undefined });
     const groups = (claims.groups ?? []) as string[];
     const db = prisma();

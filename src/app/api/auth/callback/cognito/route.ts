@@ -5,6 +5,7 @@ import { dbConfigured, prisma } from '@/lib/db';
 import {
   getCognitoConfig, exchangeCode, verifyIdToken, readCookie,
   clearFlowCookie, publicOrigin, resolvePostLoginTarget,
+  authFailedResponse,
 } from '@/lib/cognito';
 import { newSessionToken, sessionCookie } from '@/lib/auth';
 import { clientIpFromHeaders, globalRegistrationTracker } from '@/lib/rate-limit';
@@ -41,7 +42,7 @@ export async function GET(req: Request) {
   const verifierCookie = readCookie(cookieHeader, 'zdx_cognito_verifier');
   const nextCookie = readCookie(cookieHeader, 'zdx_cognito_next');
   const clearCookies = () => {
-    const res = NextResponse.json({ error: 'AUTHENTICATION_FAILED' }, { status: 400 });
+    const res = authFailedResponse('/api/auth/cognito?mode=login', 'Try signing in again →');
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_cognito_state'));
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_cognito_nonce'));
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_cognito_verifier'));
@@ -64,6 +65,11 @@ export async function GET(req: Request) {
   }
   const db = prisma();
   const email = claims.email.toLowerCase();
+  // Durable admin determination (admin-console-v1): the verified
+  // ID-token groups claim is the only moment group membership is
+  // known, so record it on the user now and refresh it on every
+  // login. Routing hint only — never authorization for /api/admin/*.
+  const isAdmin = (claims.groups ?? []).includes(cfg.adminGroup);
   // Sub-link fast path + email-conflict guard (outside the tx so the
   // 409 does not roll back anything and never auto-merges).
   // bySub/byEmail are hoisted so the registration-rate check below can
@@ -150,6 +156,7 @@ export async function GET(req: Request) {
     const result = await db.$transaction(async (tx: any) => {
       const existing = await tx.user.findUnique({ where: { cognitoSub: claims.sub }, include: { tenant: true } });
       if (existing) {
+        await tx.user.update({ where: { id: existing.id }, data: { cognitoAdmin: isAdmin } });
         const session = await tx.session.create({ data: { userId: existing.id, tokenHash, provider: 'cognito', expiresAt } });
         await tx.auditLog.create({
           data: { tenantId: existing.tenantId, actor: existing.email, action: 'auth.cognito-login', entity: `User:${existing.id}`, details: {} },
@@ -159,7 +166,7 @@ export async function GET(req: Request) {
       const localPart = email.split('@')[0] || 'user';
       const tenant = await tx.tenant.create({ data: { name: localPart, subscriptionStatus: 'restricted' } });
       const user = await tx.user.create({
-        data: { tenantId: tenant.id, email, passwordHash: null, authProvider: 'cognito', cognitoSub: claims.sub, role: 'member' },
+        data: { tenantId: tenant.id, email, passwordHash: null, authProvider: 'cognito', cognitoSub: claims.sub, role: 'member', cognitoAdmin: isAdmin },
       });
       const session = await tx.session.create({ data: { userId: user.id, tokenHash, provider: 'cognito', expiresAt } });
       await tx.auditLog.create({
@@ -177,6 +184,7 @@ export async function GET(req: Request) {
     if (e?.code === 'P2002') {
       const retry = await db.user.findUnique({ where: { cognitoSub: claims.sub } });
       if (retry) {
+        try { await db.user.update({ where: { id: retry.id }, data: { cognitoAdmin: isAdmin } }); } catch { /* login must not fail on the flag refresh */ }
         await db.session.create({ data: { userId: retry.id, tokenHash, provider: 'cognito', expiresAt } });
         // Redirect against the PUBLIC origin (from the registered
         // callback URI), never req url.origin: behind the proxy the

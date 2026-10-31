@@ -14,7 +14,7 @@
 
 export type MeState = {
   authenticated: boolean;
-  user?: { email: string; tenantId: string; role?: string; provider?: string };
+  user?: { email: string; tenantId: string; role?: string; provider?: string; cognitoAdmin?: boolean };
 };
 
 export type NavLink = { href: string; label: string };
@@ -33,6 +33,10 @@ export function navLinksFor(me: MeState | null, isOperator: boolean): NavLink[] 
     { href: '/settings', label: 'Settings' },
   ];
   if (isOperator) links.push({ href: '/admin', label: 'Admin dashboard' });
+  // A Cognito admin-group member WITHOUT an operator session yet gets
+  // the operator sign-in entry point — never the Admin link itself,
+  // which would imply access the tenant session does not grant.
+  else if (me.user?.cognitoAdmin) links.push({ href: '/api/admin/auth/cognito?next=/admin', label: 'Operator sign-in' });
   return links;
 }
 

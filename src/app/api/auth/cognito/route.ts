@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import {
   getCognitoConfig, buildAuthorizeUrl, newCodeVerifier, codeChallenge,
-  newRandomToken, flowCookie, safeNext, type CognitoMode,
+  newRandomToken, flowCookie, flowNext, type CognitoMode,
 } from '@/lib/cognito';
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +18,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'INVALID_REQUEST' }, { status: 400 });
   }
   const mode = modeParam as CognitoMode;
-  const next = safeNext(url.searchParams.get('next'));
+  const next = flowNext(url.searchParams.get('next'));
   const state = newRandomToken();
   const nonce = newRandomToken();
   const verifier = newCodeVerifier();

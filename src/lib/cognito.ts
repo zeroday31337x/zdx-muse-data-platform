@@ -25,6 +25,7 @@ export type CognitoConfig = {
   clientId: string;
   domain: string;
   redirectUri: string;
+  operatorRedirectUri?: string | null;
   issuer: string;
   adminGroup: string;
 };
@@ -37,7 +38,7 @@ export function getCognitoConfig(): CognitoConfig | null {
   const redirectUri = process.env.COGNITO_REDIRECT_URI;
   if (!region || !userPoolId || !clientId || !domain || !redirectUri) return null;
   const issuer = process.env.COGNITO_ISSUER || `https://cognito-idp.${region}.amazonaws.com/${userPoolId}`;
-  return { region, userPoolId, clientId, domain, redirectUri, issuer, adminGroup: process.env.COGNITO_ADMIN_GROUP || 'zdx-data-admin' };
+  return { region, userPoolId, clientId, domain, redirectUri, operatorRedirectUri: process.env.COGNITO_OPERATOR_REDIRECT_URI || null, issuer, adminGroup: process.env.COGNITO_ADMIN_GROUP || 'zdx-data-admin' };
 }
 
 export function base64url(input: Buffer | string): string {
@@ -70,11 +71,11 @@ export function authorizePath(mode: CognitoMode): string {
   return '/oauth2/authorize';
 }
 
-export function buildAuthorizeUrl(cfg: CognitoConfig, mode: CognitoMode, flow: { state: string; nonce: string; codeChallenge: string }): string {
+export function buildAuthorizeUrl(cfg: CognitoConfig, mode: CognitoMode, flow: { state: string; nonce: string; codeChallenge: string }, redirectUriOverride?: string): string {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: cfg.clientId,
-    redirect_uri: cfg.redirectUri,
+    redirect_uri: redirectUriOverride ?? cfg.redirectUri,
     scope: 'openid email profile',
     state: flow.state,
     nonce: flow.nonce,
@@ -161,6 +162,7 @@ export async function exchangeCode(
   code: string,
   codeVerifier: string,
   fetchFn?: FetchFn,
+  redirectUriOverride?: string,
 ): Promise<{ idToken: string; accessToken?: string }> {
   const fn: FetchFn = fetchFn ?? (async (url: string, init?: RequestInit) => {
     const res = await fetch(url, init);
@@ -170,7 +172,7 @@ export async function exchangeCode(
     grant_type: 'authorization_code',
     client_id: cfg.clientId,
     code,
-    redirect_uri: cfg.redirectUri,
+    redirect_uri: redirectUriOverride ?? cfg.redirectUri,
     code_verifier: codeVerifier,
   });
   const res = await fn(`${cfg.domain.replace(/\/$/, '')}/oauth2/token`, {
@@ -230,6 +232,32 @@ export function safeNext(next: string | null | undefined): string {
   if (!next) return '/';
   if (next.startsWith('/') && !next.startsWith('//')) return next;
   return '/';
+}
+
+/**
+ * Flow-cookie next value (admin-console-v1). A MISSING next param is
+ * NOT a choice: it stores '' so the callback falls through to the
+ * role default (admin → /admin, everyone else → /dashboard) via
+ * resolvePostLoginTarget. Storing safeNext's '/' default instead
+ * turned "no destination" into an affirmative homepage redirect, which
+ * is what dropped admin-group sign-ins on '/' instead of forwarding
+ * them. An explicitly supplied next still goes through safeNext.
+ */
+export function flowNext(nextParam: string | null | undefined): string {
+  if (nextParam === null || nextParam === undefined) return '';
+  return safeNext(nextParam);
+}
+
+/**
+ * Callback-failure page (admin-console-v1). Callback failures used to
+ * return bare JSON ({error: AUTHENTICATION_FAILED}) with no way back
+ * — a dead end for a mistyped tab, a replayed code, or an expired
+ * flow. This is still generic (no provider detail, no tokens) but
+ * gives the user a one-tap retry into a fresh flow.
+ */
+export function authFailedResponse(retryHref: string, retryLabel: string): Response {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Sign-in failed</title></head><body style="font-family:system-ui,sans-serif;background:#0b1220;color:#e5e7eb;padding:2rem"><h1>Sign-in failed</h1><p>That sign-in attempt did not complete. This can happen if the sign-in was started twice, the page was refreshed, or too much time passed before completing it. Nothing was changed on your account.</p><p><a style="color:#7dd3fc" href="${retryHref.replace(/"/g, '')}">${retryLabel}</a></p></body></html>`;
+  return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 }
 
 /**

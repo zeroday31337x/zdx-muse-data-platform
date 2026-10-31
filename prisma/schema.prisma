@@ -196,6 +196,11 @@ model User {
   // Disablement marker, checked on every requireSession. NULL = active.
   disabledAt   DateTime?
   role         String    @default("member")
+  // Refreshed from the verified ID-token cognito:groups claim at every
+  // Cognito login (admin-console-v1). Routing hint ONLY: it is never
+  // authorization for /api/admin/*, which still requires a separate
+  // operator session. Tenant role stays tenant-scoped.
+  cognitoAdmin Boolean    @default(false)
   createdAt    DateTime  @default(now())
   sessions     Session[]
 }
