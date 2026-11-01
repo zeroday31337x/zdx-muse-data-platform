@@ -34,8 +34,13 @@ describe('operator MFA enrollment helpers', () => {
   });
 
   it('rejects a malformed associate response', async () => {
-    const { fn } = mockFetch({ SecretCode: 'ABCDEF' });
+    const { fn } = mockFetch({});
     await expect(associateSoftwareToken('us-east-1', 'tok', fn)).rejects.toThrow('COGNITO_IDP_FAILED');
+  });
+
+  it('accepts a secret without a session: Cognito omits Session for plain authenticated-user associates', async () => {
+    const { fn } = mockFetch({ SecretCode: 'ABCDEF' });
+    await expect(associateSoftwareToken('us-east-1', 'tok', fn)).resolves.toEqual({ secretCode: 'ABCDEF', session: null });
   });
 
   it('maps verify SUCCESS true and anything else false', async () => {
@@ -43,6 +48,13 @@ describe('operator MFA enrollment helpers', () => {
     expect(await verifySoftwareToken('us-east-1', 'tok', 'sess', '123456', yes.fn)).toBe(true);
     const no = mockFetch({ Status: 'ERROR' });
     expect(await verifySoftwareToken('us-east-1', 'tok', 'sess', '000000', no.fn)).toBe(false);
+  });
+
+  it('verifies from the access token alone when no associate session exists', async () => {
+    const { fn, calls } = mockFetch({ Status: 'SUCCESS' });
+    expect(await verifySoftwareToken('us-east-1', 'tok', null, '123456', fn)).toBe(true);
+    const init = calls[0].init as { body: string };
+    expect(JSON.parse(init.body)).toEqual({ AccessToken: 'tok', UserCode: '123456' });
   });
 
   it('maps NotAuthorized to COGNITO_NOT_AUTHORIZED', async () => {

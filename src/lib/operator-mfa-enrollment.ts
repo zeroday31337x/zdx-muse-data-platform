@@ -181,29 +181,35 @@ async function idpCall(
   return data;
 }
 
-/** Start enrollment: returns the shared secret for manual authenticator entry. */
+/** Start enrollment: returns the shared secret for manual authenticator entry.
+ * The associate Session is OPTIONAL: Cognito returns SecretCode alone
+ * for a plain authenticated-user associate (the Session appears only
+ * in challenge flows), so a missing Session must never fail setup.
+ * Verify works from the access token alone when no Session exists. */
 export async function associateSoftwareToken(
   region: string,
   accessToken: string,
   fetchFn?: IdpFetch,
-): Promise<{ secretCode: string; session: string }> {
+): Promise<{ secretCode: string; session: string | null }> {
   const data = await idpCall(region, 'AssociateSoftwareToken', { AccessToken: accessToken }, fetchFn);
-  if (typeof data.SecretCode !== 'string' || typeof data.Session !== 'string') throw idpError('COGNITO_IDP_FAILED', 'MISSING_FIELDS', { keys: Object.keys(data) });
-  return { secretCode: data.SecretCode, session: data.Session };
+  if (typeof data.SecretCode !== 'string') throw idpError('COGNITO_IDP_FAILED', 'MISSING_FIELDS', { keys: Object.keys(data) });
+  return { secretCode: data.SecretCode, session: typeof data.Session === 'string' ? data.Session : null };
 }
 
-/** Verify the user-typed code against Cognito. True only on SUCCESS. */
+/** Verify the user-typed code against Cognito. True only on SUCCESS.
+ * The associate Session is included only when setup produced one;
+ * without it, verification runs from the access token alone. */
 export async function verifySoftwareToken(
   region: string,
   accessToken: string,
-  associateSession: string,
+  associateSession: string | null,
   code: string,
   fetchFn?: IdpFetch,
 ): Promise<boolean> {
   const data = await idpCall(
     region,
     'VerifySoftwareToken',
-    { AccessToken: accessToken, Session: associateSession, UserCode: code },
+    { AccessToken: accessToken, ...(associateSession !== null ? { Session: associateSession } : {}), UserCode: code },
     fetchFn,
   );
   return data.Status === 'SUCCESS';

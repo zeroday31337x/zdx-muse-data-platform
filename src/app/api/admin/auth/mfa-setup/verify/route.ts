@@ -19,6 +19,8 @@ import {
   parseEnrollmentAttempts,
   enrollmentAttemptsCookie,
   clearEnrollmentCookies,
+  cognitoTypeOf,
+  cognitoDetailsOf,
   MAX_VERIFY_ATTEMPTS,
 } from '@/lib/operator-mfa-enrollment';
 export const dynamic = 'force-dynamic';
@@ -34,13 +36,17 @@ export async function POST(req: Request) {
   const cookieHeader = req.headers.get('cookie');
   const accessToken = readCookie(cookieHeader, ENROLLMENT_ACCESS_COOKIE);
   const associateSession = readCookie(cookieHeader, ENROLLMENT_ASSOCIATE_COOKIE);
-  const attempts = parseEnrollmentAttempts(readCookie(cookieHeader, ENROLLMENT_ATTEMPTS_COOKIE));
+  // The attempts cookie is set by a successful setup GET, so its
+  // presence marks setup as done even when Cognito returned no
+  // associate session (verify then runs from the access token alone).
+  const attemptsRaw = readCookie(cookieHeader, ENROLLMENT_ATTEMPTS_COOKIE);
+  const attempts = parseEnrollmentAttempts(attemptsRaw);
   const clearAll = (res: NextResponse) => {
     for (const c of clearEnrollmentCookies()) res.headers.append('Set-Cookie', c);
     return res;
   };
   if (!accessToken) return clearAll(NextResponse.json({ error: 'SETUP_SESSION_EXPIRED' }, { status: 401 }));
-  if (!associateSession) return NextResponse.json({ error: 'SETUP_NOT_STARTED' }, { status: 400 });
+  if (!associateSession && attemptsRaw === null) return NextResponse.json({ error: 'SETUP_NOT_STARTED' }, { status: 400 });
   if (attempts >= MAX_VERIFY_ATTEMPTS) {
     return clearAll(NextResponse.json({ error: 'VERIFY_ATTEMPTS_EXHAUSTED' }, { status: 429 }));
   }
@@ -61,6 +67,12 @@ export async function POST(req: Request) {
     await operatorAudit(db, { operatorId: s.operator.id, action: 'OPERATOR_MFA_ENROLLED', entity: `PlatformOperator:${s.operator.id}` });
     return clearAll(NextResponse.json({ ok: true, mfaVerified: true }));
   } catch (e) {
+    // Verify failures were previously unaudited, so whether Cognito
+    // was even reached was unobservable. Audit the kind + safe shape
+    // metadata (never token/secret content) before responding.
+    try {
+      await operatorAudit(prisma(), { operatorId: s.operator.id, action: 'OPERATOR_MFA_VERIFY_FAILED', entity: `PlatformOperator:${s.operator.id}`, details: { kind: cognitoTypeOf(e) ?? 'UNKNOWN', ...(cognitoDetailsOf(e) ?? {}) } });
+    } catch { /* audit is best-effort; the error response still returns */ }
     if (e instanceof Error && e.message === 'COGNITO_NOT_AUTHORIZED') {
       return clearAll(NextResponse.json({ error: 'SETUP_SESSION_EXPIRED' }, { status: 401 }));
     }

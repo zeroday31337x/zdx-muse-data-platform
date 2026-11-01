@@ -1,8 +1,11 @@
 // GET /api/admin/auth/mfa-setup — start operator TOTP enrollment.
 // MFA_PENDING sessions only (plus the guard's 401s). Returns the
 // shared secret for manual authenticator entry; the Cognito associate
-// session itself is never returned to the client — it travels back
-// in a short-lived httpOnly enrollment cookie for the verify step.
+// session, when Cognito returns one, is never returned to the client
+// — it travels back in a short-lived httpOnly enrollment cookie for
+// the verify step. When Cognito returns no session (plain
+// authenticated-user associate), verify runs from the access token
+// alone and the attempts cookie marks setup as done.
 import { NextResponse } from 'next/server';
 import { dbConfigured, prisma } from '@/lib/db';
 import { getCognitoConfig, readCookie } from '@/lib/cognito';
@@ -39,15 +42,20 @@ export async function GET(req: Request) {
     // loudly here, not silently drop it and fail at verify time.
     // The length is audited (a number, never the session itself) so
     // an oversize session is distinguishable from a Cognito error.
-    const encodedSessionLength = encodeURIComponent(session).length;
-    if (encodedSessionLength > 3800) {
-      try {
-        await operatorAudit(prisma(), { operatorId: s.operator.id, action: 'OPERATOR_MFA_SETUP_SESSION_TOO_LONG', entity: `PlatformOperator:${s.operator.id}`, details: { encodedLength: encodedSessionLength } });
-      } catch { /* audit is best-effort; the error response still returns */ }
-      return NextResponse.json({ error: 'MFA_SETUP_FAILED' }, { status: 502 });
+    // A missing session is NOT a failure: Cognito returns SecretCode
+    // alone for a plain authenticated-user associate, and verify
+    // runs from the access token alone in that case.
+    if (session !== null) {
+      const encodedSessionLength = encodeURIComponent(session).length;
+      if (encodedSessionLength > 3800) {
+        try {
+          await operatorAudit(prisma(), { operatorId: s.operator.id, action: 'OPERATOR_MFA_SETUP_SESSION_TOO_LONG', entity: `PlatformOperator:${s.operator.id}`, details: { encodedLength: encodedSessionLength } });
+        } catch { /* audit is best-effort; the error response still returns */ }
+        return NextResponse.json({ error: 'MFA_SETUP_FAILED' }, { status: 502 });
+      }
     }
     const res = NextResponse.json({ secretCode, account: s.operator.email, issuer: 'ZeroDriveX' });
-    res.headers.append('Set-Cookie', enrollmentAssociateCookie(session));
+    if (session !== null) res.headers.append('Set-Cookie', enrollmentAssociateCookie(session));
     res.headers.append('Set-Cookie', enrollmentAttemptsCookie(0));
     const db = prisma();
     await operatorAudit(db, { operatorId: s.operator.id, action: 'OPERATOR_MFA_SETUP_STARTED', entity: `PlatformOperator:${s.operator.id}` });
