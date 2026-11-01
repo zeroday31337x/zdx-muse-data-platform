@@ -46,7 +46,16 @@ export async function GET(req: Request) {
     return res;
   } catch (e) {
     if (e instanceof Error && e.message === 'COGNITO_NOT_AUTHORIZED') {
-      const res = NextResponse.json({ error: 'SETUP_SESSION_EXPIRED' }, { status: 401 });
+      // Cognito rejected the enrollment token (most often: the sign-in
+      // token lacks aws.cognito.signin.user.admin). This used to reuse
+      // the 401 SETUP_SESSION_EXPIRED response, so a token rejection
+      // looked exactly like an expired sign-in — the mask that hid
+      // this failure. It now gets its own 403, its own audit row
+      // (boolean fact, no token content), and its own page state.
+      try {
+        await operatorAudit(prisma(), { operatorId: s.operator.id, action: 'OPERATOR_MFA_SETUP_REJECTED', entity: `PlatformOperator:${s.operator.id}` });
+      } catch { /* audit is best-effort; the error response still returns */ }
+      const res = NextResponse.json({ error: 'MFA_SETUP_NOT_AUTHORIZED' }, { status: 403 });
       for (const c of clearEnrollmentCookies()) res.headers.append('Set-Cookie', c);
       return res;
     }

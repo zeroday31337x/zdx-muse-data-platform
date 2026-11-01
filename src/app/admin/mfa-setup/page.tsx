@@ -4,12 +4,13 @@ import { useEffect, useState } from 'react';
 // Operator TOTP enrollment page (admin-route MFA). The operator must
 // already hold an MFA_PENDING operator session from a fresh operator
 // sign-in: the setup secret comes from that sign-in's Cognito access
-// token, held server-side in process memory only. No QR library is
-// used — the secret is shown for manual authenticator entry, so the
-// secret never leaves this page for a third-party QR service.
+// token, carried in a short-lived httpOnly enrollment cookie set at
+// sign-in. No QR library is used — the secret is shown for manual
+// authenticator entry, so the secret never leaves this page for a
+// third-party QR service.
 type Setup = { secretCode: string; account: string; issuer: string };
 export default function OperatorMfaSetup() {
-  const [state, setState] = useState<'loading' | 'setup' | 'expired' | 'verified' | 'done' | 'error'>('loading');
+  const [state, setState] = useState<'loading' | 'setup' | 'expired' | 'notAuthorized' | 'verified' | 'done' | 'error'>('loading');
   const [setup, setSetup] = useState<Setup | null>(null);
   const [code, setCode] = useState('');
   const [notice, setNotice] = useState('');
@@ -20,6 +21,7 @@ export default function OperatorMfaSetup() {
       try {
         const r = await fetch('/api/admin/auth/mfa-setup');
         if (r.status === 401) { setState('expired'); return; }
+        if (r.status === 403) { setState('notAuthorized'); return; }
         if (r.status === 409) { setState('verified'); return; }
         if (!r.ok) { setState('error'); return; }
         const j = (await r.json().catch(() => ({}))) as Partial<Setup>;
@@ -61,7 +63,17 @@ export default function OperatorMfaSetup() {
       <main className="page">
         <p className="kicker">Admin dashboard</p>
         <h1 className="brand">Sign-in expired</h1>
-        <p className="subtitle">Your operator sign-in is too old to start enrollment, or the server restarted. Sign in as operator again and come straight back here.</p>
+        <p className="subtitle">Your operator sign-in is too old to start enrollment, or it predates enrollment support. Sign in as operator again and come straight back here.</p>
+        <p><a className="btn btn-primary" href="/api/admin/auth/cognito?next=/admin/mfa-setup">Sign in as operator again</a></p>
+      </main>
+    );
+  }
+  if (state === 'notAuthorized') {
+    return (
+      <main className="page">
+        <p className="kicker">Admin dashboard</p>
+        <h1 className="brand">Enrollment rejected</h1>
+        <p className="subtitle">Cognito rejected the enrollment token: this sign-in is missing the enrollment permission (aws.cognito.signin.user.admin). Enable that scope for the operator sign-in, then sign in as operator again and come straight back here.</p>
         <p><a className="btn btn-primary" href="/api/admin/auth/cognito?next=/admin/mfa-setup">Sign in as operator again</a></p>
       </main>
     );

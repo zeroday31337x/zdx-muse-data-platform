@@ -76,12 +76,22 @@ export function authorizePath(mode: CognitoMode): string {
   return '/oauth2/authorize';
 }
 
-export function buildAuthorizeUrl(cfg: CognitoConfig, mode: CognitoMode, flow: { state: string; nonce: string; codeChallenge: string }, redirectUriOverride?: string): string {
+// Operator sign-ins request the Cognito enrollment scope in addition to
+// the default scopes. AssociateSoftwareToken (operator TOTP enrollment)
+// rejects access tokens without aws.cognito.signin.user.admin, and that
+// rejection used to surface as a bare "Sign-in expired" — see the setup
+// route. Tenant sign-ins deliberately keep the default scopes (least
+// privilege: tenants never call Cognito admin APIs). The app client must
+// also allow this scope, or Cognito rejects the authorize request with
+// invalid_scope — console first, then deploy.
+export const OPERATOR_SCOPES = 'openid email profile aws.cognito.signin.user.admin';
+
+export function buildAuthorizeUrl(cfg: CognitoConfig, mode: CognitoMode, flow: { state: string; nonce: string; codeChallenge: string }, redirectUriOverride?: string, scopeOverride?: string): string {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: cfg.clientId,
     redirect_uri: redirectUriOverride ?? cfg.redirectUri,
-    scope: 'openid email profile',
+    scope: scopeOverride ?? 'openid email profile',
     state: flow.state,
     nonce: flow.nonce,
     code_challenge: flow.codeChallenge,

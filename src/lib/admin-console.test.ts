@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { flowNext, safeNext, resolvePostLoginTarget, buildAuthorizeUrl, getCognitoConfig } from './cognito';
+import { flowNext, safeNext, resolvePostLoginTarget, buildAuthorizeUrl, getCognitoConfig, OPERATOR_SCOPES } from './cognito';
 import { navLinksFor } from './nav';
 
 describe('flowNext: a missing destination is not a choice', () => {
@@ -50,6 +50,13 @@ describe('operator authorize URL uses the operator callback', () => {
   it('without an override the tenant redirect URI is used', () => {
     const url = buildAuthorizeUrl(cfg, 'login', { state: 's', nonce: 'n', codeChallenge: 'c' });
     expect(url).toContain(`redirect_uri=${encodeURIComponent(cfg.redirectUri)}`);
+  });
+  it('operator scopes carry the enrollment scope; the default does not', () => {
+    expect(OPERATOR_SCOPES).toContain('aws.cognito.signin.user.admin');
+    const op = buildAuthorizeUrl(cfg, 'login', { state: 's', nonce: 'n', codeChallenge: 'c' }, cfg.operatorRedirectUri, OPERATOR_SCOPES);
+    expect(new URL(op).searchParams.get('scope')).toBe(OPERATOR_SCOPES);
+    const tenant = buildAuthorizeUrl(cfg, 'login', { state: 's', nonce: 'n', codeChallenge: 'c' });
+    expect(new URL(tenant).searchParams.get('scope')).toBe('openid email profile');
   });
 });
 

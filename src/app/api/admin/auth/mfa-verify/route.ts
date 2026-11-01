@@ -3,7 +3,7 @@
 // challenge happen (hosted-UI flows, not custom forms). A full session
 // is not required to reach this route; an MFA_PENDING session is.
 import { NextResponse } from 'next/server';
-import { getCognitoConfig, buildAuthorizeUrl, newCodeVerifier, codeChallenge, newRandomToken, flowCookie } from '@/lib/cognito';
+import { getCognitoConfig, buildAuthorizeUrl, newCodeVerifier, codeChallenge, newRandomToken, flowCookie, OPERATOR_SCOPES } from '@/lib/cognito';
 import { requireOperator, isOperatorResult } from '@/lib/operator-auth';
 export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
@@ -20,7 +20,7 @@ export async function GET(req: Request) {
   const state = newRandomToken();
   const nonce = newRandomToken();
   const verifier = newCodeVerifier();
-  const target = buildAuthorizeUrl(cfg, 'login', { state, nonce, codeChallenge: codeChallenge(verifier) }, cfg.operatorRedirectUri);
+  const target = buildAuthorizeUrl(cfg, 'login', { state, nonce, codeChallenge: codeChallenge(verifier) }, cfg.operatorRedirectUri, OPERATOR_SCOPES);
   const res = NextResponse.redirect(target);
   res.headers.append('Set-Cookie', flowCookie('zdx_op_state', state));
   res.headers.append('Set-Cookie', flowCookie('zdx_op_nonce', nonce));
