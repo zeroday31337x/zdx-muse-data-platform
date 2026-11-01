@@ -12,7 +12,8 @@ import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { dbConfigured, prisma } from '@/lib/db';
 import { getCognitoConfig, exchangeCode, verifyIdToken, readCookie, clearFlowCookie, publicOrigin, resolvePostLoginTarget, authFailedResponse } from '@/lib/cognito';
-import { OPERATOR_ADMIN_GROUP, mintOperatorSession, operatorSessionCookie, operatorMfaVerifiedFromClaims, operatorAudit } from '@/lib/operator-auth';
+import { OPERATOR_ADMIN_GROUP, mintOperatorSession, operatorSessionCookie, operatorMfaVerifiedFromClaims, operatorAudit, hashOperatorToken } from '@/lib/operator-auth';
+import { storeEnrollmentAccessToken } from '@/lib/operator-mfa-enrollment';
 export const dynamic = 'force-dynamic';
 function timingSafeEqualStr(a: string, b: string): boolean {
   try {
@@ -64,6 +65,11 @@ export async function GET(req: Request) {
     if (operator.disabledAt) return fail(401, 'OPERATOR_DISABLED');
     const mfaVerified = operatorMfaVerifiedFromClaims(claims);
     const { raw } = await mintOperatorSession(operator.id, mfaVerified);
+    // Pending sessions need an enrollment path: hold the callback's
+    // access token in process memory only (see operator-mfa-enrollment)
+    // so the operator can enroll a TOTP authenticator without the
+    // pool forcing MFA on tenant users. Verified sessions need none.
+    if (!mfaVerified && tokens.accessToken) storeEnrollmentAccessToken(hashOperatorToken(raw), tokens.accessToken);
     await operatorAudit(db, { operatorId: operator.id, action: mfaVerified ? 'OPERATOR_LOGIN_MFA' : 'OPERATOR_LOGIN_MFA_PENDING', entity: `PlatformOperator:${operator.id}` });
     // Public origin, not req url.origin (same localhost:3000 trap as the
     // tenant callback). Operators default to /admin; a next value is

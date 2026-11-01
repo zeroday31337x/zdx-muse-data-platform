@@ -11,6 +11,9 @@
 // MFA redirect; every other /api/admin/* route returns 403
 // MFA_REQUIRED. Disabled operators get 401 on every use.
 // Session lifetime is PROPOSED 8 hours (not a decided value).
+// MFA enrollment lives in operator-mfa-enrollment.ts: a pending
+// session may also call the mfa-setup routes, which enroll a TOTP
+// authenticator through Cognito's own APIs.
 import { createHash, randomBytes } from 'crypto';
 import { NextResponse } from 'next/server';
 import { prisma } from './db';
@@ -67,8 +70,9 @@ export async function getOperatorSession(req: Request): Promise<OperatorSession 
 }
 
 /**
- * Operator guard. allowMfaPending=true only for mfa-status and the
- * MFA redirect. Otherwise MFA_PENDING → 403 MFA_REQUIRED.
+ * Operator guard. allowMfaPending=true only for mfa-status, the
+ * MFA redirect, and the mfa-setup enrollment routes. Otherwise
+ * MFA_PENDING → 403 MFA_REQUIRED.
  * Returns { operator, session } or { response }.
  */
 export async function requireOperator(req: Request, opts: { allowMfaPending?: boolean } = {}): Promise<OperatorSession | { response: Response }> {

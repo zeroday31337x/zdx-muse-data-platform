@@ -172,8 +172,9 @@ export default function AdminDashboard() {
       <main className="page">
         <p className="kicker">Admin dashboard</p>
         <h1 className="brand">Multi-factor authentication required</h1>
-        <p className="subtitle">Your operator session exists but is not MFA-verified. Admin routes stay closed until MFA is completed in the hosted UI.</p>
-        <p><a className="btn btn-primary" href="/api/admin/auth/mfa-verify">Complete MFA verification</a></p>
+        <p className="subtitle">Your operator session exists but is not MFA-verified. Admin routes stay closed until MFA is verified.</p>
+        <p><a className="btn btn-primary" href="/admin/mfa-setup">Set up authenticator</a> <span> </span><a className="btn" href="/api/admin/auth/mfa-verify">Complete MFA verification</a></p>
+        <p className="muted">No authenticator yet? Set one up first — you will get a secret key to enter in your authenticator app. Already enrolled? Use verification to refresh your session instead.</p>
       </main>
     );
   }
