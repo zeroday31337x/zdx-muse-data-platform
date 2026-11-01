@@ -12,8 +12,8 @@ import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { dbConfigured, prisma } from '@/lib/db';
 import { getCognitoConfig, exchangeCode, verifyIdToken, readCookie, clearFlowCookie, publicOrigin, resolvePostLoginTarget, authFailedResponse } from '@/lib/cognito';
-import { OPERATOR_ADMIN_GROUP, mintOperatorSession, operatorSessionCookie, operatorMfaVerifiedFromClaims, operatorAudit, hashOperatorToken } from '@/lib/operator-auth';
-import { storeEnrollmentAccessToken } from '@/lib/operator-mfa-enrollment';
+import { OPERATOR_ADMIN_GROUP, mintOperatorSession, operatorSessionCookie, operatorMfaVerifiedFromClaims, operatorAudit } from '@/lib/operator-auth';
+import { enrollmentAccessCookie } from '@/lib/operator-mfa-enrollment';
 export const dynamic = 'force-dynamic';
 function timingSafeEqualStr(a: string, b: string): boolean {
   try {
@@ -65,17 +65,24 @@ export async function GET(req: Request) {
     if (operator.disabledAt) return fail(401, 'OPERATOR_DISABLED');
     const mfaVerified = operatorMfaVerifiedFromClaims(claims);
     const { raw } = await mintOperatorSession(operator.id, mfaVerified);
-    // Pending sessions need an enrollment path: hold the callback's
-    // access token in process memory only (see operator-mfa-enrollment)
-    // so the operator can enroll a TOTP authenticator without the
-    // pool forcing MFA on tenant users. Verified sessions need none.
-    if (!mfaVerified && tokens.accessToken) storeEnrollmentAccessToken(hashOperatorToken(raw), tokens.accessToken);
     await operatorAudit(db, { operatorId: operator.id, action: mfaVerified ? 'OPERATOR_LOGIN_MFA' : 'OPERATOR_LOGIN_MFA_PENDING', entity: `PlatformOperator:${operator.id}` });
+    // Pending sessions need an enrollment path: hand the callback's
+    // access token to the enrollment routes in a short-lived,
+    // httpOnly, Secure, Path-scoped cookie (see
+    // operator-mfa-enrollment for why server memory is not used).
+    // Verified sessions need none. A missing token is audited as a
+    // boolean fact (no token content) so it can never again fail
+    // silently as a bare SETUP_SESSION_EXPIRED.
+    const enrollmentReady = !mfaVerified && !!tokens.accessToken;
+    if (!mfaVerified && !tokens.accessToken) {
+      await operatorAudit(db, { operatorId: operator.id, action: 'OPERATOR_MFA_NO_ACCESS_TOKEN', entity: `PlatformOperator:${operator.id}` });
+    }
     // Public origin, not req url.origin (same localhost:3000 trap as the
     // tenant callback). Operators default to /admin; a next value is
     // honored only if it is a real page path.
     const res = NextResponse.redirect(new URL(resolvePostLoginTarget(nextCookie, true), publicOrigin(cfg.redirectUri, url.origin)).toString());
     res.headers.append('Set-Cookie', operatorSessionCookie(raw));
+    if (enrollmentReady) res.headers.append('Set-Cookie', enrollmentAccessCookie(tokens.accessToken as string));
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_op_state'));
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_op_nonce'));
     res.headers.append('Set-Cookie', clearFlowCookie('zdx_op_verifier'));

@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server';
 import { dbConfigured, prisma } from '@/lib/db';
 import { requireOperator, isOperatorResult, clearOperatorSessionCookie, hashOperatorToken } from '@/lib/operator-auth';
 import { readCookie } from '@/lib/cognito';
+import { clearEnrollmentCookies } from '@/lib/operator-mfa-enrollment';
 export const dynamic = 'force-dynamic';
 export async function POST(req: Request) {
   if (!dbConfigured()) return NextResponse.json({ error: 'DATABASE_NOT_CONFIGURED' }, { status: 503 });
@@ -18,5 +19,7 @@ export async function POST(req: Request) {
   }
   const res = NextResponse.json({ ok: true });
   res.headers.append('Set-Cookie', clearOperatorSessionCookie());
+  // A destroyed session must not leave enrollment material behind.
+  for (const c of clearEnrollmentCookies()) res.headers.append('Set-Cookie', c);
   return res;
 }

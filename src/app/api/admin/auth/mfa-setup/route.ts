@@ -1,13 +1,19 @@
 // GET /api/admin/auth/mfa-setup — start operator TOTP enrollment.
 // MFA_PENDING sessions only (plus the guard's 401s). Returns the
 // shared secret for manual authenticator entry; the Cognito associate
-// session itself is never returned to the client — it stays in the
-// server-side enrollment entry until the verify step.
+// session itself is never returned to the client — it travels back
+// in a short-lived httpOnly enrollment cookie for the verify step.
 import { NextResponse } from 'next/server';
 import { dbConfigured, prisma } from '@/lib/db';
 import { getCognitoConfig, readCookie } from '@/lib/cognito';
-import { requireOperator, isOperatorResult, hashOperatorToken, OPERATOR_COOKIE, operatorAudit } from '@/lib/operator-auth';
-import { getEnrollmentEntry, setEnrollmentAssociateSession, associateSoftwareToken } from '@/lib/operator-mfa-enrollment';
+import { requireOperator, isOperatorResult, operatorAudit } from '@/lib/operator-auth';
+import {
+  ENROLLMENT_ACCESS_COOKIE,
+  associateSoftwareToken,
+  enrollmentAssociateCookie,
+  enrollmentAttemptsCookie,
+  clearEnrollmentCookies,
+} from '@/lib/operator-mfa-enrollment';
 export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   if (!dbConfigured()) return NextResponse.json({ error: 'DATABASE_NOT_CONFIGURED' }, { status: 503 });
@@ -16,22 +22,33 @@ export async function GET(req: Request) {
   const s = await requireOperator(req, { allowMfaPending: true });
   if (!isOperatorResult(s)) return s.response;
   if (s.session.mfaVerifiedAt) return NextResponse.json({ error: 'ALREADY_VERIFIED' }, { status: 409 });
-  const raw = readCookie(req.headers.get('cookie'), OPERATOR_COOKIE);
-  const entry = raw ? getEnrollmentEntry(hashOperatorToken(raw)) : undefined;
-  if (!entry) {
-    // No live enrollment entry: the sign-in's access token expired,
-    // was used up, or the server restarted. Re-sign-in mints a fresh one.
-    return NextResponse.json({ error: 'SETUP_SESSION_EXPIRED' }, { status: 401 });
+  const accessToken = readCookie(req.headers.get('cookie'), ENROLLMENT_ACCESS_COOKIE);
+  if (!accessToken) {
+    // No enrollment cookie: the sign-in predates enrollment support,
+    // the cookie expired (1h), or the operator never came through a
+    // fresh operator sign-in. Re-sign-in mints a fresh one.
+    const res = NextResponse.json({ error: 'SETUP_SESSION_EXPIRED' }, { status: 401 });
+    for (const c of clearEnrollmentCookies()) res.headers.append('Set-Cookie', c);
+    return res;
   }
   try {
-    const { secretCode, session } = await associateSoftwareToken(cfg.region, entry.accessToken);
-    setEnrollmentAssociateSession(hashOperatorToken(raw as string), session);
+    const { secretCode, session } = await associateSoftwareToken(cfg.region, accessToken);
+    // A cookie that cannot hold the associate session must fail
+    // loudly here, not silently drop it and fail at verify time.
+    if (encodeURIComponent(session).length > 3800) {
+      return NextResponse.json({ error: 'MFA_SETUP_FAILED' }, { status: 502 });
+    }
+    const res = NextResponse.json({ secretCode, account: s.operator.email, issuer: 'ZeroDriveX' });
+    res.headers.append('Set-Cookie', enrollmentAssociateCookie(session));
+    res.headers.append('Set-Cookie', enrollmentAttemptsCookie(0));
     const db = prisma();
     await operatorAudit(db, { operatorId: s.operator.id, action: 'OPERATOR_MFA_SETUP_STARTED', entity: `PlatformOperator:${s.operator.id}` });
-    return NextResponse.json({ secretCode, account: s.operator.email, issuer: 'ZeroDriveX' });
+    return res;
   } catch (e) {
     if (e instanceof Error && e.message === 'COGNITO_NOT_AUTHORIZED') {
-      return NextResponse.json({ error: 'SETUP_SESSION_EXPIRED' }, { status: 401 });
+      const res = NextResponse.json({ error: 'SETUP_SESSION_EXPIRED' }, { status: 401 });
+      for (const c of clearEnrollmentCookies()) res.headers.append('Set-Cookie', c);
+      return res;
     }
     return NextResponse.json({ error: 'MFA_SETUP_FAILED' }, { status: 502 });
   }

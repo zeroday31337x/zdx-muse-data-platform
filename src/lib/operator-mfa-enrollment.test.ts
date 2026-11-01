@@ -1,14 +1,14 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   associateSoftwareToken,
   verifySoftwareToken,
   enableSoftwareTokenMfa,
   isValidTotpCode,
-  storeEnrollmentAccessToken,
-  getEnrollmentEntry,
-  setEnrollmentAssociateSession,
-  deleteEnrollmentEntry,
-  ENROLLMENT_TTL_MS,
+  enrollmentAccessCookie,
+  enrollmentAssociateCookie,
+  enrollmentAttemptsCookie,
+  clearEnrollmentCookies,
+  parseEnrollmentAttempts,
 } from './operator-mfa-enrollment';
 
 function mockFetch(body: Record<string, unknown>, ok = true, status = 200) {
@@ -69,24 +69,35 @@ describe('operator MFA enrollment helpers', () => {
   });
 });
 
-describe('enrollment entry store', () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  it('holds an entry, then drops it after the TTL', () => {
-    storeEnrollmentAccessToken('hash-1', 'tok-1');
-    const entry = getEnrollmentEntry('hash-1');
-    expect(entry?.accessToken).toBe('tok-1');
-    expect(entry?.attempts).toBe(0);
-    setEnrollmentAssociateSession('hash-1', 'sess-9');
-    expect(getEnrollmentEntry('hash-1')?.associateSession).toBe('sess-9');
-    vi.advanceTimersByTime(ENROLLMENT_TTL_MS + 1);
-    expect(getEnrollmentEntry('hash-1')).toBeUndefined();
+describe('enrollment cookies', () => {
+  it('holds the access token in a short-lived, httpOnly, Secure, Path-scoped cookie', () => {
+    const c = enrollmentAccessCookie('tok-1');
+    expect(c).toContain('zdx_op_enroll=tok-1');
+    expect(c).toContain('HttpOnly');
+    expect(c).toContain('Secure');
+    expect(c).toContain('Path=/api/admin/auth');
+    expect(c).toContain('Max-Age=3600');
   });
 
-  it('deletes on demand', () => {
-    storeEnrollmentAccessToken('hash-2', 'tok-2');
-    deleteEnrollmentEntry('hash-2');
-    expect(getEnrollmentEntry('hash-2')).toBeUndefined();
+  it('holds the associate session for ten minutes', () => {
+    expect(enrollmentAssociateCookie('sess-9')).toContain('Max-Age=600');
+  });
+
+  it('clears all three enrollment cookies', () => {
+    const cleared = clearEnrollmentCookies();
+    expect(cleared).toHaveLength(3);
+    for (const c of cleared) expect(c).toContain('Max-Age=0');
+    expect(cleared.join(' ')).toContain('zdx_op_enroll=');
+    expect(cleared.join(' ')).toContain('zdx_op_mfa_session=');
+    expect(cleared.join(' ')).toContain('zdx_op_mfa_attempts=');
+  });
+
+  it('parses the attempt counter defensively', () => {
+    expect(parseEnrollmentAttempts('3')).toBe(3);
+    expect(parseEnrollmentAttempts(null)).toBe(0);
+    expect(parseEnrollmentAttempts('abc')).toBe(0);
+    expect(parseEnrollmentAttempts('-1')).toBe(0);
+    expect(parseEnrollmentAttempts('2.9')).toBe(2);
+    expect(enrollmentAttemptsCookie(4)).toContain('zdx_op_mfa_attempts=4');
   });
 });

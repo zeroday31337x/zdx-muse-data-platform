@@ -12,58 +12,88 @@
 // operator session MFA-verified. The app never verifies a TOTP code
 // itself, and enrollment or a DB timestamp alone never verifies MFA.
 //
-// Token handling — a deliberate, narrow exception to the "never
-// stored" rule in cognito.ts, which bars DB, cookie, and log
-// persistence: the Cognito access token from the operator sign-in
-// callback is held ONLY in this process's memory, keyed by the
-// operator session token hash, TTL 1 hour (the access token's own
-// lifetime), and deleted on enrollment success, on verify-attempt
-// exhaustion, or on expiry. It is never written to the DB, never set
-// as a cookie, never logged, and never leaves the server except in
-// Cognito API calls. A server restart drops it: the operator simply
-// signs in again (SETUP_SESSION_EXPIRED). This retention is
-// unavoidable for a two-step enrollment — the associate step and
-// the verify step are separated by the user reading a secret and
-// typing a code — and it is the smallest retention that works.
+// State handling — READ THIS BEFORE CHANGING IT. The first version
+// held the callback's Cognito access token in a process-memory Map,
+// keyed by session hash. That failed in production: fresh operator
+// sign-ins minted pending sessions, yet setup always answered
+// SETUP_SESSION_EXPIRED, even though the code, the session cookie,
+// and the single production process all checked out. Route bundles
+// in a production Next.js build do not reliably share module-level
+// state across routes, so cross-route server memory is NOT a sound
+// place for enrollment state. This version therefore keeps the two
+// enrollment values in short-lived, HttpOnly, Secure, Path-scoped
+// browser cookies instead (see the cookie helpers below): they
+// survive restarts and bundling boundaries, because the browser
+// carries them back to exactly the routes that need them.
+//   - Access token: Path=/api/admin/auth, Max-Age 3600 (the token's
+//     own lifetime). Set only by the operator callback, only for
+//     pending sessions. Cleared on enrollment success, on token
+//     rejection, on attempt exhaustion, and on operator logout.
+//   - Associate session: Path=/api/admin/auth, Max-Age 600 (ten
+//     minutes is ample to read a secret and type a code). Useless
+//     without the access token, and the setup routes additionally
+//     require a valid pending operator session, so these cookies
+//     alone grant nothing.
+//   - Attempt counter: a plain count cookie, same scope. It deters
+//     casual guessing; it is NOT tamper-proof (deleting it resets
+//     the count), and it is documented as such — the real bounds
+//     are the 1-hour token life, the 30-second TOTP rotation, and
+//     Cognito's own throttling.
+// Revision to the rule in cognito.ts ("never set as cookies"): this
+// is the single, deliberate exception — httpOnly (never readable
+// by page JavaScript), Secure, narrowly Path-scoped, short-lived,
+// never logged, never in the DB, cleared on every terminal path.
+// The callback additionally audits OPERATOR_MFA_NO_ACCESS_TOKEN
+// (a boolean fact, no token content) when a pending login yields
+// no access token, so a token-side failure is distinguishable
+// from a transport failure instead of failing silently again.
 import type { FetchFn } from './cognito';
 
-export const ENROLLMENT_TTL_MS = 60 * 60 * 1000;
 export const MAX_VERIFY_ATTEMPTS = 5;
 
-type EnrollmentEntry = {
-  accessToken: string;
-  associateSession?: string;
-  attempts: number;
-  expiresAt: number;
-};
+export const ENROLLMENT_ACCESS_COOKIE = 'zdx_op_enroll';
+export const ENROLLMENT_ASSOCIATE_COOKIE = 'zdx_op_mfa_session';
+export const ENROLLMENT_ATTEMPTS_COOKIE = 'zdx_op_mfa_attempts';
+export const ENROLLMENT_ACCESS_MAX_AGE = 3600;
+export const ENROLLMENT_ASSOCIATE_MAX_AGE = 600;
 
-const entries = new Map<string, EnrollmentEntry>();
-
-function prune(now = Date.now()): void {
-  for (const [key, entry] of entries) {
-    if (entry.expiresAt <= now) entries.delete(key);
-  }
+function enrollmentCookie(name: string, value: string, maxAge: number): string {
+  return `${name}=${encodeURIComponent(value)}; HttpOnly; Path=/api/admin/auth; SameSite=Lax; Secure; Max-Age=${maxAge}`;
 }
 
-/** Hold the callback's access token for a pending operator session. */
-export function storeEnrollmentAccessToken(sessionTokenHash: string, accessToken: string): void {
-  prune();
-  entries.set(sessionTokenHash, { accessToken, attempts: 0, expiresAt: Date.now() + ENROLLMENT_TTL_MS });
+function clearEnrollmentCookie(name: string): string {
+  return `${name}=; HttpOnly; Path=/api/admin/auth; SameSite=Lax; Secure; Max-Age=0`;
 }
 
-export function getEnrollmentEntry(sessionTokenHash: string): EnrollmentEntry | undefined {
-  prune();
-  return entries.get(sessionTokenHash);
+/** Short-lived holder for the callback's Cognito access token (pending sessions only). */
+export function enrollmentAccessCookie(accessToken: string): string {
+  return enrollmentCookie(ENROLLMENT_ACCESS_COOKIE, accessToken, ENROLLMENT_ACCESS_MAX_AGE);
 }
 
-export function setEnrollmentAssociateSession(sessionTokenHash: string, associateSession: string): void {
-  prune();
-  const entry = entries.get(sessionTokenHash);
-  if (entry) entry.associateSession = associateSession;
+/** Short-lived holder for the Cognito associate session (setup GET -> verify POST). */
+export function enrollmentAssociateCookie(associateSession: string): string {
+  return enrollmentCookie(ENROLLMENT_ASSOCIATE_COOKIE, associateSession, ENROLLMENT_ASSOCIATE_MAX_AGE);
 }
 
-export function deleteEnrollmentEntry(sessionTokenHash: string): void {
-  entries.delete(sessionTokenHash);
+/** Best-effort attempt counter (see header: bypassable by deleting it, bounded by token TTL). */
+export function enrollmentAttemptsCookie(count: number): string {
+  return enrollmentCookie(ENROLLMENT_ATTEMPTS_COOKIE, String(count), ENROLLMENT_ACCESS_MAX_AGE);
+}
+
+/** All three enrollment cookies, cleared. */
+export function clearEnrollmentCookies(): string[] {
+  return [
+    clearEnrollmentCookie(ENROLLMENT_ACCESS_COOKIE),
+    clearEnrollmentCookie(ENROLLMENT_ASSOCIATE_COOKIE),
+    clearEnrollmentCookie(ENROLLMENT_ATTEMPTS_COOKIE),
+  ];
+}
+
+/** Parse the attempt counter defensively: anything malformed counts as 0. */
+export function parseEnrollmentAttempts(value: string | null): number {
+  if (!value) return 0;
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
 /** A TOTP code is exactly 6 digits. Anything else is rejected before any Cognito call. */

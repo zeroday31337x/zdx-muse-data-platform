@@ -1,10 +1,15 @@
 // AWS Cognito hosted-UI auth for the Data Intelligence Platform.
 // Public client + PKCE (S256). There is NO client secret: the app client
 // is a public client, and no secret is ever read, stored, or sent.
-// Raw Cognito tokens are never stored in the DB, never set as cookies,
-// and never logged. The callback mints a standard DB Session row (see
-// the callback route); Cognito JWTs are verified once at callback time
-// and are NOT re-verified on every request.
+// Raw Cognito tokens are never stored in the DB and never logged.
+// The callback mints a standard DB Session row (see the callback
+// route); Cognito JWTs are verified once at callback time and are
+// NOT re-verified on every request. Single deliberate exception to
+// "never set as cookies": operator MFA enrollment hands the
+// callback's access token to the enrollment routes in a short-lived,
+// HttpOnly, Secure, Path-scoped cookie (see
+// operator-mfa-enrollment for why server memory is not used and for
+// the exact bounds). ID tokens are never put in cookies.
 //
 // MFA interpretation (staging blocker, see report): operator MFA is
 // established from an authenticated Cognito MFA event. In v1 this is
