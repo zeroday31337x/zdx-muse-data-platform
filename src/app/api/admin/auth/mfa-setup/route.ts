@@ -13,6 +13,7 @@ import {
   enrollmentAssociateCookie,
   enrollmentAttemptsCookie,
   clearEnrollmentCookies,
+  cognitoTypeOf,
 } from '@/lib/operator-mfa-enrollment';
 export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
@@ -35,7 +36,13 @@ export async function GET(req: Request) {
     const { secretCode, session } = await associateSoftwareToken(cfg.region, accessToken);
     // A cookie that cannot hold the associate session must fail
     // loudly here, not silently drop it and fail at verify time.
-    if (encodeURIComponent(session).length > 3800) {
+    // The length is audited (a number, never the session itself) so
+    // an oversize session is distinguishable from a Cognito error.
+    const encodedSessionLength = encodeURIComponent(session).length;
+    if (encodedSessionLength > 3800) {
+      try {
+        await operatorAudit(prisma(), { operatorId: s.operator.id, action: 'OPERATOR_MFA_SETUP_SESSION_TOO_LONG', entity: `PlatformOperator:${s.operator.id}`, details: { encodedLength: encodedSessionLength } });
+      } catch { /* audit is best-effort; the error response still returns */ }
       return NextResponse.json({ error: 'MFA_SETUP_FAILED' }, { status: 502 });
     }
     const res = NextResponse.json({ secretCode, account: s.operator.email, issuer: 'ZeroDriveX' });
@@ -59,6 +66,12 @@ export async function GET(req: Request) {
       for (const c of clearEnrollmentCookies()) res.headers.append('Set-Cookie', c);
       return res;
     }
+    // Any other associate failure: audit the KIND (Cognito __type,
+    // NETWORK, or BAD_RESPONSE — never token/secret content) so the
+    // cause is observable instead of collapsing into a bare 502.
+    try {
+      await operatorAudit(prisma(), { operatorId: s.operator.id, action: 'OPERATOR_MFA_SETUP_FAILED', entity: `PlatformOperator:${s.operator.id}`, details: { kind: cognitoTypeOf(e) ?? 'UNKNOWN' } });
+    } catch { /* audit is best-effort; the error response still returns */ }
     return NextResponse.json({ error: 'MFA_SETUP_FAILED' }, { status: 502 });
   }
 }

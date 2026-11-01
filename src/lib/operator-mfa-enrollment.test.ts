@@ -9,6 +9,7 @@ import {
   enrollmentAttemptsCookie,
   clearEnrollmentCookies,
   parseEnrollmentAttempts,
+  cognitoTypeOf,
 } from './operator-mfa-enrollment';
 
 function mockFetch(body: Record<string, unknown>, ok = true, status = 200) {
@@ -46,6 +47,23 @@ describe('operator MFA enrollment helpers', () => {
   it('maps NotAuthorized to COGNITO_NOT_AUTHORIZED', async () => {
     const { fn } = mockFetch({ __type: 'NotAuthorizedException', message: 'expired' }, false, 400);
     await expect(associateSoftwareToken('us-east-1', 'tok', fn)).rejects.toThrow('COGNITO_NOT_AUTHORIZED');
+  });
+
+  it('preserves the Cognito error kind on non-NotAuthorized failures', async () => {
+    const { fn } = mockFetch({ __type: 'InvalidParameterException', message: 'bad' }, false, 400);
+    const err = await associateSoftwareToken('us-east-1', 'tok', fn).catch((e: unknown) => e);
+    expect((err as Error).message).toBe('COGNITO_IDP_FAILED');
+    expect(cognitoTypeOf(err)).toBe('InvalidParameterException');
+  });
+
+  it('tags network failures and malformed responses distinctly', async () => {
+    const net = async () => { throw new Error('boom'); };
+    const netErr = await associateSoftwareToken('us-east-1', 'tok', net as Parameters<typeof associateSoftwareToken>[2]).catch((e: unknown) => e);
+    expect(cognitoTypeOf(netErr)).toBe('NETWORK');
+    const bad = async () => ({ ok: true, status: 200, text: async () => 'not-json' });
+    const badErr = await associateSoftwareToken('us-east-1', 'tok', bad as Parameters<typeof associateSoftwareToken>[2]).catch((e: unknown) => e);
+    expect(cognitoTypeOf(badErr)).toBe('BAD_RESPONSE');
+    expect(cognitoTypeOf(new Error('plain'))).toBeNull();
   });
 
   it('enables software-token MFA as preferred', async () => {

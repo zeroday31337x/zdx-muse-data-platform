@@ -110,6 +110,26 @@ function defaultFetch(): IdpFetch {
   };
 }
 
+// Cognito IDP failures carry their __type on the error so callers can
+// audit the failure KIND (never token/secret content). Without this,
+// every non-NotAuthorized associate failure collapsed into a bare
+// 502 and the setup page's generic "Enrollment unavailable" — the
+// cause (InvalidParameter, throttling, network, oversize session,
+// malformed response) was unobservable server-side.
+export function idpError(message: string, cognitoType: string): Error {
+  const e = new Error(message);
+  (e as unknown as { cognitoType: string }).cognitoType = cognitoType;
+  return e;
+}
+
+export function cognitoTypeOf(e: unknown): string | null {
+  if (e instanceof Error) {
+    const t = (e as unknown as { cognitoType?: unknown }).cognitoType;
+    if (typeof t === 'string' && t) return t;
+  }
+  return null;
+}
+
 async function idpCall(
   region: string,
   target: string,
@@ -117,19 +137,29 @@ async function idpCall(
   fetchFn?: IdpFetch,
 ): Promise<Record<string, unknown>> {
   const fn = fetchFn ?? defaultFetch();
-  const res = await fn(`https://cognito-idp.${region}.amazonaws.com/`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-amz-json-1.1',
-      'X-Amz-Target': `AWSCognitoIdentityProviderService.${target}`,
-    },
-    body: JSON.stringify(body),
-  });
-  const data = JSON.parse(await res.text()) as Record<string, unknown>;
+  let res: { ok: boolean; status: number; text: () => Promise<string> };
+  try {
+    res = await fn(`https://cognito-idp.${region}.amazonaws.com/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-amz-json-1.1',
+        'X-Amz-Target': `AWSCognitoIdentityProviderService.${target}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw idpError('COGNITO_IDP_FAILED', 'NETWORK');
+  }
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(await res.text()) as Record<string, unknown>;
+  } catch {
+    throw idpError('COGNITO_IDP_FAILED', 'BAD_RESPONSE');
+  }
   if (!res.ok) {
     const type = typeof data.__type === 'string' ? data.__type : '';
-    if (type.includes('NotAuthorizedException')) throw new Error('COGNITO_NOT_AUTHORIZED');
-    throw new Error('COGNITO_IDP_FAILED');
+    if (type.includes('NotAuthorizedException')) throw idpError('COGNITO_NOT_AUTHORIZED', type);
+    throw idpError('COGNITO_IDP_FAILED', type || 'UNKNOWN');
   }
   return data;
 }
@@ -141,7 +171,7 @@ export async function associateSoftwareToken(
   fetchFn?: IdpFetch,
 ): Promise<{ secretCode: string; session: string }> {
   const data = await idpCall(region, 'AssociateSoftwareToken', { AccessToken: accessToken }, fetchFn);
-  if (typeof data.SecretCode !== 'string' || typeof data.Session !== 'string') throw new Error('COGNITO_IDP_FAILED');
+  if (typeof data.SecretCode !== 'string' || typeof data.Session !== 'string') throw idpError('COGNITO_IDP_FAILED', 'BAD_RESPONSE');
   return { secretCode: data.SecretCode, session: data.Session };
 }
 
