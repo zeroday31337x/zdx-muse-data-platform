@@ -14,6 +14,7 @@ import {
   enrollmentAttemptsCookie,
   clearEnrollmentCookies,
   cognitoTypeOf,
+  cognitoDetailsOf,
 } from '@/lib/operator-mfa-enrollment';
 export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
@@ -66,11 +67,12 @@ export async function GET(req: Request) {
       for (const c of clearEnrollmentCookies()) res.headers.append('Set-Cookie', c);
       return res;
     }
-    // Any other associate failure: audit the KIND (Cognito __type,
-    // NETWORK, or BAD_RESPONSE — never token/secret content) so the
-    // cause is observable instead of collapsing into a bare 502.
+    // Any other associate failure: audit the KIND plus safe shape
+    // metadata (status, body length, response key NAMES — never
+    // token/secret content or bodies) so the cause is observable
+    // instead of collapsing into a bare 502.
     try {
-      await operatorAudit(prisma(), { operatorId: s.operator.id, action: 'OPERATOR_MFA_SETUP_FAILED', entity: `PlatformOperator:${s.operator.id}`, details: { kind: cognitoTypeOf(e) ?? 'UNKNOWN' } });
+      await operatorAudit(prisma(), { operatorId: s.operator.id, action: 'OPERATOR_MFA_SETUP_FAILED', entity: `PlatformOperator:${s.operator.id}`, details: { kind: cognitoTypeOf(e) ?? 'UNKNOWN', ...(cognitoDetailsOf(e) ?? {}) } });
     } catch { /* audit is best-effort; the error response still returns */ }
     return NextResponse.json({ error: 'MFA_SETUP_FAILED' }, { status: 502 });
   }

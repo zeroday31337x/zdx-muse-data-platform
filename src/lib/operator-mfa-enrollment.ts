@@ -110,15 +110,18 @@ function defaultFetch(): IdpFetch {
   };
 }
 
-// Cognito IDP failures carry their __type on the error so callers can
-// audit the failure KIND (never token/secret content). Without this,
-// every non-NotAuthorized associate failure collapsed into a bare
-// 502 and the setup page's generic "Enrollment unavailable" — the
-// cause (InvalidParameter, throttling, network, oversize session,
-// malformed response) was unobservable server-side.
-export function idpError(message: string, cognitoType: string): Error {
+// Cognito IDP failures carry their kind on the error so callers can
+// audit the failure KIND (never token/secret content, never response
+// bodies). Without this, every non-NotAuthorized associate failure
+// collapsed into a bare 502 and the setup page's generic "Enrollment
+// unavailable" — the cause (InvalidParameter, throttling, network,
+// oversize session, unparseable response, unexpected shape) was
+// unobservable server-side. Details carry only safe shape metadata:
+// HTTP status, body length, and response key NAMES (never values).
+export function idpError(message: string, cognitoType: string, details?: Record<string, unknown>): Error {
   const e = new Error(message);
   (e as unknown as { cognitoType: string }).cognitoType = cognitoType;
+  if (details) (e as unknown as { cognitoDetails: Record<string, unknown> }).cognitoDetails = details;
   return e;
 }
 
@@ -126,6 +129,14 @@ export function cognitoTypeOf(e: unknown): string | null {
   if (e instanceof Error) {
     const t = (e as unknown as { cognitoType?: unknown }).cognitoType;
     if (typeof t === 'string' && t) return t;
+  }
+  return null;
+}
+
+export function cognitoDetailsOf(e: unknown): Record<string, unknown> | null {
+  if (e instanceof Error) {
+    const d = (e as unknown as { cognitoDetails?: unknown }).cognitoDetails;
+    if (d && typeof d === 'object' && !Array.isArray(d)) return d as Record<string, unknown>;
   }
   return null;
 }
@@ -148,18 +159,24 @@ async function idpCall(
       body: JSON.stringify(body),
     });
   } catch {
-    throw idpError('COGNITO_IDP_FAILED', 'NETWORK');
+    throw idpError('COGNITO_IDP_FAILED', 'NETWORK', { target });
+  }
+  let text: string;
+  try {
+    text = await res.text();
+  } catch {
+    throw idpError('COGNITO_IDP_FAILED', 'BODY_READ_FAILED', { target, status: res.status });
   }
   let data: Record<string, unknown>;
   try {
-    data = JSON.parse(await res.text()) as Record<string, unknown>;
+    data = JSON.parse(text) as Record<string, unknown>;
   } catch {
-    throw idpError('COGNITO_IDP_FAILED', 'BAD_RESPONSE');
+    throw idpError('COGNITO_IDP_FAILED', 'PARSE_FAILED', { target, status: res.status, bodyLen: text.length });
   }
   if (!res.ok) {
     const type = typeof data.__type === 'string' ? data.__type : '';
-    if (type.includes('NotAuthorizedException')) throw idpError('COGNITO_NOT_AUTHORIZED', type);
-    throw idpError('COGNITO_IDP_FAILED', type || 'UNKNOWN');
+    if (type.includes('NotAuthorizedException')) throw idpError('COGNITO_NOT_AUTHORIZED', type, { target, status: res.status });
+    throw idpError('COGNITO_IDP_FAILED', type || 'UNKNOWN', { target, status: res.status });
   }
   return data;
 }
@@ -171,7 +188,7 @@ export async function associateSoftwareToken(
   fetchFn?: IdpFetch,
 ): Promise<{ secretCode: string; session: string }> {
   const data = await idpCall(region, 'AssociateSoftwareToken', { AccessToken: accessToken }, fetchFn);
-  if (typeof data.SecretCode !== 'string' || typeof data.Session !== 'string') throw idpError('COGNITO_IDP_FAILED', 'BAD_RESPONSE');
+  if (typeof data.SecretCode !== 'string' || typeof data.Session !== 'string') throw idpError('COGNITO_IDP_FAILED', 'MISSING_FIELDS', { keys: Object.keys(data) });
   return { secretCode: data.SecretCode, session: data.Session };
 }
 

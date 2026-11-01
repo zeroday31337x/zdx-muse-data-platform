@@ -10,6 +10,7 @@ import {
   clearEnrollmentCookies,
   parseEnrollmentAttempts,
   cognitoTypeOf,
+  cognitoDetailsOf,
 } from './operator-mfa-enrollment';
 
 function mockFetch(body: Record<string, unknown>, ok = true, status = 200) {
@@ -62,8 +63,17 @@ describe('operator MFA enrollment helpers', () => {
     expect(cognitoTypeOf(netErr)).toBe('NETWORK');
     const bad = async () => ({ ok: true, status: 200, text: async () => 'not-json' });
     const badErr = await associateSoftwareToken('us-east-1', 'tok', bad as Parameters<typeof associateSoftwareToken>[2]).catch((e: unknown) => e);
-    expect(cognitoTypeOf(badErr)).toBe('BAD_RESPONSE');
+    expect(cognitoTypeOf(badErr)).toBe('PARSE_FAILED');
+    expect(cognitoDetailsOf(badErr)).toEqual({ target: 'AssociateSoftwareToken', status: 200, bodyLen: 8 });
     expect(cognitoTypeOf(new Error('plain'))).toBeNull();
+    expect(cognitoDetailsOf(new Error('plain'))).toBeNull();
+  });
+
+  it('reports missing fields with the response key names only', async () => {
+    const { fn } = mockFetch({ SomethingElse: 'x' });
+    const err = await associateSoftwareToken('us-east-1', 'tok', fn).catch((e: unknown) => e);
+    expect(cognitoTypeOf(err)).toBe('MISSING_FIELDS');
+    expect(cognitoDetailsOf(err)).toEqual({ keys: ['SomethingElse'] });
   });
 
   it('enables software-token MFA as preferred', async () => {
