@@ -160,6 +160,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           await confirmSpendReservation(tx, reservation.reservationId, result.estimatedCostUsd);
           await tx.usageLedger.create({ data: ledgerData() });
           await tx.job.update({ where: { id: job.id }, data: { committed: ins.count, status: 'COMPLETED', requestedModel: metaGate.requestedModel, resolvedModel, dataClass } });
+          await tx.auditLog.create({ data: { tenantId: s.user.tenantId, actor: `user:${s.user.id}`, action: 'AUGMENT_COMPLETED', entity: `Dataset:${id}`, details: { jobId: job.id, generator: META_AUGMENT_GENERATOR, model: resolvedModel, committed: ins.count, costUsd: result.estimatedCostUsd } } });
           return ins.count;
         }, { timeout: 60000 });
         const comp = await compositionDb(id);
@@ -211,6 +212,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         }
         const inserted = rows.length > 0 ? await tx.record.createMany({ data: rows, skipDuplicates: true }) : { count: 0 };
         await tx.job.update({ where: { id: job.id }, data: { committed: inserted.count, status: 'COMPLETED' } });
+        await tx.auditLog.create({ data: { tenantId: s.user.tenantId, actor: `user:${s.user.id}`, action: 'AUGMENT_COMPLETED', entity: `Dataset:${id}`, details: { jobId: job.id, generator: 'template', committed: inserted.count } } });
         return inserted.count;
       }, { timeout: 60000 });
       const comp = await compositionDb(id);

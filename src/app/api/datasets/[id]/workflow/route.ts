@@ -24,6 +24,7 @@ import {
   assertWorkflowTenant,
   curateRecords,
   exportGateCheck,
+  summarizeWorkflowStage,
   type WorkflowRunState,
   type WorkflowStageKindV1,
   type StageOutcome,
@@ -41,19 +42,10 @@ const postSchema = z.object({
   stages: z.array(z.string()).optional(),
 });
 
-/** Small, safe summary of a stage result for the Job checkpoint. */
-function summarize(kind: WorkflowStageKindV1, result: unknown): unknown {
-  const r = result as any;
-  if (kind === 'curate') return r?.report ?? null;
-  if (kind === 'evaluate') return r ? { source: r.source, model: r.model, issueCount: Array.isArray(r.issues) ? r.issues.length : 0, note: r.note } : null;
-  if (kind === 'export') return r?.report ?? null;
-  return null;
-}
-
 function checkpointOf(state: WorkflowRunState) {
   return {
     currentStageIndex: state.currentStageIndex,
-    stages: state.stages.map((s) => ({ kind: s.kind, status: s.status, error: s.error, summary: summarize(s.kind, s.result) })),
+    stages: state.stages.map((s) => ({ kind: s.kind, status: s.status, error: s.error, summary: summarizeWorkflowStage(s.kind, s.result) })),
   };
 }
 
@@ -212,6 +204,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     where: { id: job.id },
     data: { status: advanced.status, committed, error: advanced.error, checkpoint: checkpointOf(advanced) },
   });
+  if (updated.status === 'COMPLETED' || updated.status === 'PAUSED') {
+    await db.auditLog.create({ data: { tenantId: s.user.tenantId, actor: `user:${s.user.id}`, action: updated.status === 'COMPLETED' ? 'WORKFLOW_COMPLETED' : 'WORKFLOW_PAUSED', entity: `WorkflowRun:${job.id}`, details: { datasetId: id, stagesCompleted: committed, stagesTotal: advanced.stages.length, error: advanced.error ?? null } } });
+  }
   return NextResponse.json({
     ...presentRun(updated),
     note: 'v1 export stage runs the export gate and composition report only; file delivery remains the existing /export route.',

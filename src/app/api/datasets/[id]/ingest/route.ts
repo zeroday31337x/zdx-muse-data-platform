@@ -121,6 +121,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     }
     await db.dataset.update({ where: { id }, data: { sourceChecksum: checksum, ...(parsed.data.sourceName ? { sourceName: parsed.data.sourceName } : {}), ...(parsed.data.sourceLicense ? { sourceLicense: parsed.data.sourceLicense } : {}) } });
     const job = await db.job.create({ data: { datasetId: id, tenantId: s.user.tenantId, kind: 'ingest', status: 'COMPLETED', total: rows.length, committed: inserted } });
+    await db.auditLog.create({ data: { tenantId: s.user.tenantId, actor: `user:${s.user.id}`, action: 'INGEST_COMPLETED', entity: `Dataset:${id}`, details: { jobId: job.id, total: rows.length, committed: inserted } } });
     return NextResponse.json({ datasetId: id, jobId: job.id, committed: inserted, skippedDuplicates: rows.length - inserted, total: rows.length, checksum });
   }
   const s = loadStore();

@@ -89,7 +89,7 @@ export async function inferSchema(records: Record<string, unknown>[], dataClass:
 }
 
 /** Semantic evaluation: deterministic checks + optional Meta judge, labelled. */
-export async function evaluateRecords(records: Record<string, unknown>[], dataClass: string, opts: { metaAllowed?: boolean; modelOverride?: string; maxOutputTokens?: number } = {}): Promise<{ source: 'meta' | 'deterministic'; model: string | null; issues: string[]; note: string } & WorkflowMetaInfo> {
+export async function evaluateRecords(records: Record<string, unknown>[], dataClass: string, opts: { metaAllowed?: boolean; modelOverride?: string; maxOutputTokens?: number } = {}): Promise<{ source: 'meta' | 'deterministic'; model: string | null; issues: string[]; note: string; judgeOutput: string | null } & WorkflowMetaInfo> {
   const issues: string[] = [];
   const seen = new Set<string>();
   for (const r of records) {
@@ -100,8 +100,8 @@ export async function evaluateRecords(records: Record<string, unknown>[], dataCl
       if (v === null || v === undefined || v === '') issues.push(`Missing value in field ${field}`);
     }
   }
-  const noMeta = (note: string, model: string | null, metaError: string | null = null): { source: 'deterministic'; model: string | null; issues: string[]; note: string } & WorkflowMetaInfo =>
-    ({ source: 'deterministic', model, issues: [...new Set(issues)], note, usage: null, estimatedCostUsd: null, metaError });
+  const noMeta = (note: string, model: string | null, metaError: string | null = null): { source: 'deterministic'; model: string | null; issues: string[]; note: string; judgeOutput: string | null } & WorkflowMetaInfo =>
+    ({ source: 'deterministic', model, issues: [...new Set(issues)], note, judgeOutput: null, usage: null, estimatedCostUsd: null, metaError });
   if (opts.metaAllowed === false) {
     return noMeta('Meta judge gated by entitlement (ENTITLEMENT_REQUIRED); deterministic issues only, not a Meta result.', null);
   }
@@ -114,7 +114,7 @@ export async function evaluateRecords(records: Record<string, unknown>[], dataCl
   if (!result.ok || !result.content) {
     return noMeta(`Meta judge failed (${result.error}); deterministic issues only.`, model, result.error ?? 'UNKNOWN');
   }
-  return { source: 'meta', model, issues: [...new Set(issues), `Meta judge: ${result.content.slice(0, 1000)}`], note: 'Meta judge output is an estimate, not objective proof. Deterministic issues are listed first.', usage: result.usage, estimatedCostUsd: result.estimatedCostUsd, metaError: null };
+  return { source: 'meta', model, issues: [...new Set(issues)], judgeOutput: result.content.slice(0, 1000), note: 'Meta judge output is an estimate, not objective proof. Deterministic issues are listed first.', usage: result.usage, estimatedCostUsd: result.estimatedCostUsd, metaError: null };
 }
 
 /** Error kinds whose outcome is uncertain: reservation must go PENDING, never released as $0. */

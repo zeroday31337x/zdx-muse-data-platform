@@ -134,6 +134,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         return NextResponse.json({ error: 'EXPORT_FAILED', message: 'Export-out completion failed; the export was not consumed. Retry.' }, { status: 500 });
       }
     }
+    if (!exportOutClaim) {
+      await db.auditLog.create({ data: { tenantId: tenant.id, actor: `user:${s.user.id}`, action: 'TRAINING_EXPORT_COMPLETED', entity: `Dataset:${id}`, details: { format: parsed.data.format, recordCount: recs.length, authenticFraction: report.authenticFraction, syntheticFraction: report.syntheticFraction } } });
+    }
     return new NextResponse(JSON.stringify({ manifest, content }), { headers: { 'Content-Type': 'application/json', 'X-Export-Format': parsed.data.format, 'X-Content-Type': contentType } });
   }
   // Demo mode has no DB: per the shared contract (item 9), export without

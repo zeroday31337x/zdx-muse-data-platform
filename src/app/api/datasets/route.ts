@@ -55,6 +55,7 @@ export async function POST(req: Request) {
     // Request rate (B2, PROPOSED values): 401 → 404 → 402 → 429 order.
     if (checkRequestRate(req, s.user.tenantId).limited) return NextResponse.json({ error: 'RATE_LIMITED' }, { status: 429 });
     const ds = await db.dataset.create({ data: { tenantId: s.user.tenantId, name: parsed.data.name, purpose: parsed.data.purpose, sourceName: parsed.data.sourceName, sourceLicense: parsed.data.sourceLicense, sourceChecksum: '' } });
+    await db.auditLog.create({ data: { tenantId: s.user.tenantId, actor: `user:${s.user.id}`, action: 'DATASET_CREATED', entity: `Dataset:${ds.id}`, details: { name: parsed.data.name, purpose: parsed.data.purpose } } });
     return NextResponse.json(ds, { status: 201 });
   }
   const s = loadStore();

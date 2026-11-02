@@ -164,6 +164,39 @@ export type CompositionCounts = {
 };
 
 /**
+ * Small, safe summary of a stage result for the Job checkpoint.
+ * Evaluate summaries carry the issue list and the judge output
+ * (truncated) — previously only a count was kept, which made a
+ * flagged issue untraceable after the run.
+ */
+export type WorkflowStageSummaryInput = {
+  report?: unknown;
+  source?: string | null;
+  model?: string | null;
+  issues?: unknown;
+  judgeOutput?: unknown;
+  note?: unknown;
+};
+
+export function summarizeWorkflowStage(kind: WorkflowStageKindV1, result: unknown): unknown {
+  const r = (result ?? {}) as WorkflowStageSummaryInput;
+  if (kind === 'curate') return r.report ?? null;
+  if (kind === 'evaluate') {
+    const issues = Array.isArray(r.issues) ? r.issues.filter((i): i is string => typeof i === 'string') : [];
+    return {
+      source: r.source ?? null,
+      model: r.model ?? null,
+      issueCount: issues.length,
+      issues: issues.slice(0, 10).map((i) => i.slice(0, 500)),
+      judgeOutput: typeof r.judgeOutput === 'string' ? r.judgeOutput.slice(0, 1000) : null,
+      note: r.note ?? null,
+    };
+  }
+  if (kind === 'export') return r.report ?? null;
+  return null;
+}
+
+/**
  * Export stage gate (v1): the same rule as the /export route — a
  * training dataset must be 70/30-compliant (record-weighted, unknown =
  * 0); anything else is blocked. This checks the gate only; file

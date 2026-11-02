@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   validateWorkflowDefinition,
   createWorkflowRun,
@@ -8,6 +8,7 @@ import {
   assertWorkflowTenant,
   curateRecords,
   exportGateCheck,
+  summarizeWorkflowStage,
   type WorkflowStageKindV1,
   type StageOutcome,
 } from './workflow-engine';
@@ -197,5 +198,54 @@ describe('no Meta call when unconfigured', () => {
       if (saved !== undefined) process.env.MODEL_API_KEY = saved;
       else delete process.env.MODEL_API_KEY;
     }
+  });
+});
+
+describe('evaluate judge output is not an issue (auditlog-evaluate fix)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.MODEL_API_KEY;
+  });
+
+  it('meta path: judge text goes to judgeOutput, not issues', async () => {
+    process.env.MODEL_API_KEY = 'test-key-do-not-use';
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ choices: [{ message: { content: 'No problems found.' } }], usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } }),
+    })));
+    const r = await evaluateRecords([{ a: 1 }, { a: 1 }], 'public', { modelOverride: 'muse-spark-1.3' });
+    expect(r.source).toBe('meta');
+    expect(r.issues).toEqual(['Duplicate record']);
+    expect(r.judgeOutput).toContain('No problems found.');
+  });
+
+  it('deterministic path: judgeOutput is null', async () => {
+    delete process.env.MODEL_API_KEY;
+    const r = await evaluateRecords([{ a: 1 }, { a: 1 }], 'public', {});
+    expect(r.source).toBe('deterministic');
+    expect(r.judgeOutput).toBe(null);
+    expect(r.issues).toContain('Duplicate record');
+  });
+});
+
+describe('summarizeWorkflowStage', () => {
+  it('evaluate summary carries issues + judgeOutput, count matches', () => {
+    const s = summarizeWorkflowStage('evaluate', { source: 'meta', model: 'muse-spark-1.3', issues: ['Missing value in field x'], judgeOutput: 'judge note', note: 'n' }) as { issueCount: number; issues: string[]; judgeOutput: string | null };
+    expect(s.issueCount).toBe(1);
+    expect(s.issues).toEqual(['Missing value in field x']);
+    expect(s.judgeOutput).toBe('judge note');
+  });
+
+  it('truncates long judge output and issue lists, keeps true count', () => {
+    const s = summarizeWorkflowStage('evaluate', { source: 'meta', model: null, issues: Array.from({ length: 15 }, (_, i) => `issue-${i}`), judgeOutput: 'x'.repeat(2000), note: null }) as { issueCount: number; issues: string[]; judgeOutput: string | null };
+    expect(s.issues).toHaveLength(10);
+    expect(s.judgeOutput).toHaveLength(1000);
+    expect(s.issueCount).toBe(15);
+  });
+
+  it('curate and export summaries pass reports through', () => {
+    expect(summarizeWorkflowStage('curate', { report: { total: 40 } })).toEqual({ total: 40 });
+    expect(summarizeWorkflowStage('export', { report: { ok: true } })).toEqual({ ok: true });
   });
 });
