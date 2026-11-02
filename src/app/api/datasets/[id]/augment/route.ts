@@ -10,8 +10,19 @@ import { entitlementGate, checkConcurrency, graceRestrictionActive } from '@/lib
 import { recordCapForTenant } from '@/lib/tier-spec';
 import { ensureGraceRestriction } from '@/lib/grace';
 import { checkRequestRate } from '@/lib/rate-limit';
+import { resolveMetaCall } from '@/lib/meta-gate';
+import { callMetaChat, metaConfigured } from '@/lib/meta';
+import { isUncertainMetaError } from '@/lib/meta-workflows';
+import { hardCeilingStatus } from '@/lib/tier-allowlist';
+import { allowanceCapForTenant, estimateMaxCostForPrompt, reserveSpend, confirmSpendReservation, pendingSpendReservation, releaseSpendReservation } from '@/lib/spend';
+import { META_AUGMENT_GENERATOR, META_AUGMENT_MAX_OUTPUT_TOKENS, assertMetaAugmentCount, buildAugmentPrompt, parseGeneratedRows, rewriteGeneratedRowIds } from '@/lib/meta-augment';
 export const dynamic = 'force-dynamic';
-const schema = z.object({ count: z.number().int().min(1).max(10000) });
+// mode selects the generator. 'template' is the historical default and
+// is unchanged when mode is omitted. 'meta' runs the Meta-backed
+// Option A path: same gates, plus model resolution, spend reservation,
+// structured-output validation, and a 'meta' generator label. The two
+// paths never mix and never fall back to each other.
+const schema = z.object({ count: z.number().int().min(1).max(10000), mode: z.enum(['template', 'meta']).default('template') });
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const body = await req.json().catch(() => ({}));
@@ -34,7 +45,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     // Approved per-tier concurrency caps are a BLOCKED input.
     let tenant = await db.tenant.findUnique({ where: { id: s.user.tenantId } });
     if (!tenant) return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
-    const gate = entitlementGate(tenant.subscriptionStatus as string, 'augment_template');
+    // Meta mode is gated as 'augment_meta' (restricted denies it);
+    // template mode keeps the historical 'augment_template' gate.
+    const gate = entitlementGate(tenant.subscriptionStatus as string, parsed.data.mode === 'meta' ? 'augment_meta' : 'augment_template');
     if (!gate.allowed) return NextResponse.json({ error: gate.code, status: tenant.subscriptionStatus }, { status: 402 });
     tenant = await ensureGraceRestriction(db, tenant);
     if (graceRestrictionActive(tenant)) {
@@ -69,6 +82,107 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       const tenantTotal = await db.record.count({ where: { dataset: { tenantId: s.user.tenantId } } });
       if (tenantTotal + parsed.data.count > cap) {
         return NextResponse.json({ error: 'QUOTA_EXCEEDED', recordLimit: cap, recordLimitStatus: 'PROPOSED', tenantTotal }, { status: 409 });
+      }
+    }
+    // ---- Meta-backed augment (Option A). Distinct generator, same
+    // gates as above, plus model resolution + spend reservation +
+    // structured validation. A Meta failure fails the job; it never
+    // falls back to template rows. ----
+    if (parsed.data.mode === 'meta') {
+      if (!metaConfigured()) return NextResponse.json({ error: 'META_NOT_CONFIGURED' }, { status: 503 });
+      const bound = assertMetaAugmentCount(parsed.data.count);
+      if (!bound.ok) return NextResponse.json({ error: bound.error }, { status: 400 });
+      const count = parsed.data.count;
+      const authenticExamples = await db.record.findMany({ where: { datasetId: id, provenance: 'AUTHENTIC_VERIFIED' }, take: 5, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+      if (authenticExamples.length === 0) return NextResponse.json({ error: 'NO_AUTHENTIC_RECORDS', message: 'Meta-backed augmentation requires verified authentic records as generation examples.' }, { status: 409 });
+      const job = await db.job.create({ data: { datasetId: id, tenantId: s.user.tenantId, kind: 'augment', status: 'QUEUED', total: count, payload: { count, generator: META_AUGMENT_GENERATOR } } });
+      const failJob = async (error: string) => { await db.job.update({ where: { id: job.id }, data: { status: 'FAILED', error } }); };
+      const compPre = await compositionDb(id);
+      const dataClass = compPre.unknown > 0 || compPre.synthetic > 0 ? 'private' : 'public';
+      const metaGate = await resolveMetaCall(db, { tenant, datasetId: id, dataClass });
+      if (!metaGate.resolution.ok) {
+        const code = metaGate.resolution.rejectionCode ?? 'MODEL_NOT_ALLOWED';
+        await db.job.update({ where: { id: job.id }, data: { status: 'FAILED', error: code, requestedModel: metaGate.requestedModel, resolvedModel: null, modelRejectionCode: code, dataClass } });
+        return NextResponse.json({ error: code, jobId: job.id }, { status: 402 });
+      }
+      const resolvedModel = metaGate.resolution.model;
+      const prompt = buildAugmentPrompt(authenticExamples.map((r: any) => r.data as Record<string, unknown>), count);
+      const ceiling = hardCeilingStatus();
+      const allowance = allowanceCapForTenant(tenant);
+      const maxCost = estimateMaxCostForPrompt(prompt, resolvedModel);
+      if (maxCost === null || !ceiling.configured) {
+        await failJob('MODEL_BUDGET_EXCEEDED');
+        return NextResponse.json({ error: 'MODEL_BUDGET_EXCEEDED', jobId: job.id }, { status: 402 });
+      }
+      const reservation = await reserveSpend(db, {
+        tenantId: s.user.tenantId, requestKey: `augment-meta:${s.user.tenantId}:${id}:${job.id}`, model: resolvedModel, maxCostUsd: maxCost, jobId: job.id,
+        caps: { perJobUsd: ceiling.perJobUsd, dailyUsd: ceiling.dailyUsd, totalUsd: ceiling.totalUsd, allowanceUsd: allowance?.capUsd ?? null },
+      });
+      if (!reservation.ok) {
+        await failJob(reservation.code);
+        return NextResponse.json({ error: reservation.code, detail: reservation.detail, jobId: job.id }, { status: 402 });
+      }
+      const result = await callMetaChat({ model: resolvedModel, messages: [{ role: 'user', content: prompt }], dataClass, maxOutputTokens: META_AUGMENT_MAX_OUTPUT_TOKENS });
+      const ledgerData = () => ({ tenantId: s.user.tenantId, jobId: job.id, model: resolvedModel, purpose: 'augment', promptTokens: result.usage.prompt_tokens, completionTokens: result.usage.completion_tokens, costUsd: result.estimatedCostUsd, datasetId: id, dataClass, planSnapshot: metaGate.planSnapshot, contributorConsentId: metaGate.contributorConsentId });
+      if (!result.ok || !result.content) {
+        if (isUncertainMetaError(result.error ?? null)) await pendingSpendReservation(db, reservation.reservationId);
+        else await releaseSpendReservation(db, reservation.reservationId);
+        await failJob(result.error ?? 'META_CALL_FAILED');
+        return NextResponse.json({ error: 'META_AUGMENT_FAILED', jobId: job.id, message: result.error ?? 'failed' }, { status: 502 });
+      }
+      const generated = parseGeneratedRows(result.content, count);
+      if (!generated.ok) {
+        // The call's spend is real even though its output is unusable:
+        // confirm at actual cost and ledger it, then fail the job
+        // without persisting any rows. Never substitute template rows.
+        await db.$transaction(async (tx: any) => {
+          await confirmSpendReservation(tx, reservation.reservationId, result.estimatedCostUsd);
+          await tx.usageLedger.create({ data: ledgerData() });
+          await tx.job.update({ where: { id: job.id }, data: { status: 'FAILED', error: generated.error, requestedModel: metaGate.requestedModel, resolvedModel, dataClass } });
+        });
+        return NextResponse.json({ error: generated.error, jobId: job.id }, { status: 502 });
+      }
+      const authentic = await db.record.findMany({ where: { datasetId: id, provenance: 'AUTHENTIC_VERIFIED' }, take: count, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+      const rows = generated.rows.map((row, i) => {
+        const base = authentic[i % authentic.length];
+        return { datasetId: id, recordKey: `${base.recordKey}-syn-${job.id}-${i}`, data: rewriteGeneratedRowIds(row, i), provenance: 'SYNTHETIC', sourceId: base.sourceId, sourceFamilyId: base.sourceFamilyId, tokens: estimateTokens(rewriteGeneratedRowIds(row, i)), meta: { generator: META_AUGMENT_GENERATOR, model: resolvedModel } };
+      });
+      try {
+        const inserted = await db.$transaction(async (tx: any) => {
+          const check = await checkCompositionInTx(tx, id, count);
+          if (!check.ok) throw new Error('SYNTHETIC_CAP_EXCEEDED');
+          const txCap = recordCapForTenant(tenant);
+          if (txCap !== null) {
+            const totalNow = await tx.record.count({ where: { dataset: { tenantId: s.user.tenantId } } });
+            if (totalNow + count > txCap) throw new Error('QUOTA_EXCEEDED');
+          }
+          const ins = rows.length > 0 ? await tx.record.createMany({ data: rows, skipDuplicates: true }) : { count: 0 };
+          await confirmSpendReservation(tx, reservation.reservationId, result.estimatedCostUsd);
+          await tx.usageLedger.create({ data: ledgerData() });
+          await tx.job.update({ where: { id: job.id }, data: { committed: ins.count, status: 'COMPLETED', requestedModel: metaGate.requestedModel, resolvedModel, dataClass } });
+          return ins.count;
+        }, { timeout: 60000 });
+        const comp = await compositionDb(id);
+        return NextResponse.json({ jobId: job.id, committed: inserted, status: 'COMPLETED', composition: comp, compositionReport: compositionReport(comp), generator: META_AUGMENT_GENERATOR, model: resolvedModel, usage: result.usage, costUsd: result.estimatedCostUsd });
+      } catch (e) {
+        // The Meta spend already happened: confirm at actual cost and
+        // ledger it even though the insert failed, then fail the job.
+        try {
+          await db.$transaction(async (tx: any) => {
+            await confirmSpendReservation(tx, reservation.reservationId, result.estimatedCostUsd);
+            await tx.usageLedger.create({ data: ledgerData() });
+          });
+        } catch { /* settlement failure must not mask the original error */ }
+        await db.job.update({ where: { id: job.id }, data: { status: 'FAILED', error: e instanceof Error ? e.message : 'WORKER_ERROR' } });
+        if (e instanceof Error && e.message === 'SYNTHETIC_CAP_EXCEEDED') {
+          const comp = await compositionDb(id);
+          return NextResponse.json({ error: 'SYNTHETIC_CAP_EXCEEDED', jobId: job.id, authentic: comp.authentic, synthetic: comp.synthetic, allowed: maxSyntheticForAuthentic(comp.authentic), requested: count, remaining: Math.max(0, maxSyntheticForAuthentic(comp.authentic) - comp.synthetic) }, { status: 409 });
+        }
+        if (e instanceof Error && e.message === 'QUOTA_EXCEEDED') {
+          const comp = await compositionDb(id);
+          return NextResponse.json({ error: 'QUOTA_EXCEEDED', jobId: job.id, recordLimitStatus: 'PROPOSED', composition: comp }, { status: 409 });
+        }
+        return NextResponse.json({ error: 'AUGMENT_FAILED', jobId: job.id, message: e instanceof Error ? e.message : 'failed' }, { status: 500 });
       }
     }
     const job = await db.job.create({ data: { datasetId: id, tenantId: s.user.tenantId, kind: 'augment', status: 'QUEUED', total: parsed.data.count, payload: { count: parsed.data.count } } });
@@ -114,6 +228,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json({ error: 'AUGMENT_FAILED', jobId: job.id, message: e instanceof Error ? e.message : 'failed' }, { status: 500 });
     }
   }
+  // Meta-backed augment requires the PostgreSQL store (spend
+  // reservation + UsageLedger); the demo file store stays template-only.
+  if (parsed.data.mode === 'meta') return NextResponse.json({ error: 'DATABASE_NOT_CONFIGURED', note: 'Meta-backed augment requires the PostgreSQL store.' }, { status: 503 });
   const s = loadStore();
   const ds = s.datasets.find((d) => d.id === id);
   if (!ds) return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
