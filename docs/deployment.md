@@ -46,7 +46,7 @@ git ls-remote https://github.com/zeroday31337x/zdx-muse-data-platform.git main
 # Local checkout
 git -C ~/workspace/zdx-muse-data-platform rev-parse HEAD
 # VPS checkout (over Tailscale)
-ssh ubuntu@100.101.46.77 'git -C ~/zdx-muse-data-platform rev-parse HEAD'
+ssh ubuntu@<vps-host> 'git -C ~/zdx-muse-data-platform rev-parse HEAD'
 ```
 
 They must all be the same SHA. If they are not, the VPS and local checkouts are behind (or ahead of) main — pull main, do not edit the VPS or push a local-only commit to catch up. A version is continuous only if every step is a commit on main: edit locally, push to GitHub, deploy on the VPS by pulling, record it.
