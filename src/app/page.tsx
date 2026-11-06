@@ -30,6 +30,9 @@ export default function Home() {
   const [msg, setMsg] = useState('');
   const [name, setName] = useState('Ecommerce demo');
   const [csv, setCsv] = useState(SAMPLE_CSV);
+  const [ingestFormat, setIngestFormat] = useState<'csv' | 'json' | 'jsonl'>('csv');
+  const [uploadFile, setUploadFile] = useState<{ name: string; size: number } | null>(null);
+  const [uploadError, setUploadError] = useState('');
   const [augmentCount, setAugmentCount] = useState(2);
   const [exportText, setExportText] = useState('');
   const [me, setMe] = useState<Me | null>(null);
@@ -75,6 +78,30 @@ export default function Home() {
       setMsg(`${label}: ${r.status} ${JSON.stringify(j).slice(0, 800)}`);
       await load();
     } catch (e) { setMsg(`${label} failed: ${e}`); }
+  };
+
+  // File upload for ingest: read the file as text into the same textarea the
+  // paste path uses. Limit matches the server MAX_UPLOAD_BYTES (10 MB).
+  const MAX_INGEST_FILE_BYTES = 10 * 1024 * 1024;
+
+  const formatForExtension = (name: string): 'csv' | 'json' | 'jsonl' | null => {
+    const ext = name.split('.').pop()?.toLowerCase();
+    if (ext === 'csv' || ext === 'txt' || ext === 'md') return 'csv';
+    if (ext === 'json') return 'json';
+    if (ext === 'jsonl') return 'jsonl';
+    return null;
+  };
+
+  const onIngestFile = (file: File | undefined) => {
+    setUploadError('');
+    if (!file) return;
+    const format = formatForExtension(file.name);
+    if (!format) { setUploadError(`Unsupported file type: ${file.name}. Use .csv, .json, .jsonl, .txt or .md.`); return; }
+    if (file.size > MAX_INGEST_FILE_BYTES) { setUploadError(`File too large: ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 10 MB.`); return; }
+    const reader = new FileReader();
+    reader.onload = () => { setCsv(String(reader.result ?? '')); setIngestFormat(format); setUploadFile({ name: file.name, size: file.size }); };
+    reader.onerror = () => { setUploadError(`Could not read ${file.name}. Try again.`); };
+    reader.readAsText(file);
   };
 
   return (
@@ -166,10 +193,24 @@ export default function Home() {
       <section className="card">
         <h2>2. Ingest (CSV, verified authentic)</h2>
         <p>Sample below is a demo sample, not real customer data. In production, mark AUTHENTIC_VERIFIED only when you have source + licence evidence.</p>
+        <div className="formrow">
+          <label className="field">Upload a file instead of pasting
+            <input className="input" type="file" accept=".csv,.json,.jsonl,.txt,.md" onChange={(e) => { onIngestFile(e.target.files?.[0]); e.target.value = ''; }} />
+          </label>
+          <label className="field">Format
+            <select className="input" value={ingestFormat} onChange={(e) => setIngestFormat(e.target.value as 'csv' | 'json' | 'jsonl')}>
+              <option value="csv">CSV</option>
+              <option value="json">JSON</option>
+              <option value="jsonl">JSONL</option>
+            </select>
+          </label>
+        </div>
+        {uploadFile ? <p>Loaded <strong>{uploadFile.name}</strong> ({(uploadFile.size / 1024).toFixed(1)} KB) as {ingestFormat}. You can still edit the text below before ingesting.</p> : null}
+        {uploadError ? <p className="err">{uploadError}</p> : null}
         <textarea className="input input-wide" value={csv} onChange={(e) => setCsv(e.target.value)} rows={8} />
         <div className="formrow">
-          <button className="btn btn-primary" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: 'csv', text: csv, provenance: 'AUTHENTIC_VERIFIED', sourceName: 'Demo sample', sourceLicense: 'Demo sample' }) }), 'Ingest')}>Ingest as verified authentic</button>
-          <button className="btn" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: 'csv', text: csv, provenance: 'AUTHENTIC_UNVERIFIED', sourceName: 'Demo sample', sourceLicense: 'Demo sample' }) }), 'Ingest unverified')}>Ingest as unverified (export will block)</button>
+          <button className="btn btn-primary" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: ingestFormat, text: csv, provenance: 'AUTHENTIC_VERIFIED', sourceName: 'Demo sample', sourceLicense: 'Demo sample' }) }), 'Ingest')}>Ingest as verified authentic</button>
+          <button className="btn" disabled={!selected} onClick={() => selected && call(async () => fetch(`/api/datasets/${selected}/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: ingestFormat, text: csv, provenance: 'AUTHENTIC_UNVERIFIED', sourceName: 'Demo sample', sourceLicense: 'Demo sample' }) }), 'Ingest unverified')}>Ingest as unverified (export will block)</button>
         </div>
       </section>
 
