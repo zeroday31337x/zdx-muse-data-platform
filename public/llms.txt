@@ -1,0 +1,24 @@
+# ZeroDriveX Data Intelligence Platform
+
+> A real-data-first platform for preparing AI training and evaluation datasets with verified provenance, quality analysis, governed synthetic augmentation and audit-ready exports.
+
+## Core capabilities
+
+- Ingest CSV, JSON and JSONL datasets with source and licence provenance
+- Distinguish verified authentic, unverified and synthetic records
+- Analyse datasets, infer schemas for review, evaluate quality and manage repair cases
+- Add controlled synthetic data while enforcing a maximum 30% synthetic share in the final dataset
+- Block training exports unless at least 70% of the final dataset is verified authentic
+- Run durable dataset jobs and export data with an audit-ready manifest
+
+## Access model
+
+- The homepage is public.
+- Dashboards, settings and tenant data require sign-in.
+- Operator administration is separate and requires its own authenticated, MFA-gated session.
+
+## Canonical links
+
+- Data Intelligence Platform: https://data.zerodrivex.com/
+- Viral Intelligence Platform: https://viral.zerodrivex.com/
+- ZeroDriveX: https://zerodrivex.com/
