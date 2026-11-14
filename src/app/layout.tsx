@@ -6,12 +6,17 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://data.zerodrivex.com'),
   title: 'ZeroDriveX Data Intelligence Platform',
   description: 'Real-data-first intelligence and governed dataset preparation, powered by Meta Muse models',
+  alternates: {
+    canonical: '/',
+  },
+  manifest: '/site.webmanifest',
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },
       { url: '/icon.svg', type: 'image/svg+xml' },
       { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
     ],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
   },
   openGraph: {
     title: 'ZeroDriveX Data Intelligence Platform',
