@@ -7,9 +7,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     {
       url: 'https://data.zerodrivex.com/',
-      lastModified: new Date(),
+      // Keep lastModified tied to a substantive public-content release.
+      // Search engines discount a value that changes on every request or
+      // unrelated rebuild.
+      lastModified: new Date('2026-11-13T00:00:00.000Z'),
       changeFrequency: 'weekly',
       priority: 1,
+      images: ['https://data.zerodrivex.com/og-image.png'],
     },
   ];
 }

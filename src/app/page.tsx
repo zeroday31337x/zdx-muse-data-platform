@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import SeoContent from '@/components/SeoContent';
 
 type Ds = { id: string; name: string; purpose: string; composition?: { authentic: number; synthetic: number; unknown: number; total: number } };
 
@@ -106,11 +107,13 @@ export default function Home() {
 
   return (
     <main className="page">
-      <p className="kicker">ZeroDriveX / Meta AI Hackathon — Startup Track</p>
-      <h1 className="brand">ZeroDriveX Data Intelligence Platform</h1>
-      <p className="subtitle">Real-data-first processing, verified provenance, and controlled synthetic augmentation. <strong>Powered by Meta Muse models.</strong> Training export is blocked unless the final dataset is ≥70% verified authentic and ≤30% synthetic.</p>
+      <p className="kicker">ZeroDriveX Data Intelligence</p>
+      <h1 className="brand">AI dataset intelligence with verified provenance</h1>
+      <p className="subtitle">Prepare training-ready datasets with source evidence, quality analysis, and controlled synthetic augmentation. <strong>Powered by Meta Muse models.</strong> Training export is blocked unless the final dataset is ≥70% verified authentic and ≤30% synthetic.</p>
 
       <div className="callout"><strong>30% cap rule:</strong> synthetic ≤ floor(3 × authentic / 7). Example: 10,000 authentic → max 4,285 synthetic. Unknown provenance never counts as authentic.</div>
+
+      <SeoContent />
 
       <div className="statusbar">
         <span><span className="pill pill-neutral">Mode: {me?.mode ?? '…'}</span></span>
@@ -315,7 +318,7 @@ export default function Home() {
       <footer className="footer">
         <span>ZeroDriveX Data Intelligence Platform</span>
         <span>Built with Muse · Meta AI Hackathon, Startup Track</span>
-        <span><a href="/api/health">Health</a> · <a href="/api/models">Models</a> · <a href="/api/jobs">Jobs</a></span>
+        <span><a href="https://viral.zerodrivex.com/">Viral Intelligence</a> · <a href="https://zerodrivex.com/">ZeroDriveX</a> · <a href="/sitemap.xml">Sitemap</a></span>
       </footer>
     </main>
   );

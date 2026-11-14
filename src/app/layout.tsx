@@ -2,12 +2,47 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import './globals.css';
 import Nav from '@/components/Nav';
+
+const title = 'AI Dataset Intelligence & Provenance Platform | ZeroDriveX';
+const description =
+  'Build training-ready datasets with verified provenance, dataset quality analysis, controlled synthetic augmentation capped at 30%, and audit-ready exports.';
+
 export const metadata: Metadata = {
   metadataBase: new URL('https://data.zerodrivex.com'),
-  title: 'ZeroDriveX Data Intelligence Platform',
-  description: 'Real-data-first intelligence and governed dataset preparation, powered by Meta Muse models',
+  title: {
+    default: title,
+    template: '%s | ZeroDriveX Data Intelligence Platform',
+  },
+  description,
+  applicationName: 'ZeroDriveX Data Intelligence Platform',
+  authors: [{ name: 'ZeroDriveX', url: 'https://zerodrivex.com/' }],
+  creator: 'ZeroDriveX',
+  publisher: 'ZeroDriveX',
+  category: 'Data intelligence software',
+  keywords: [
+    'AI dataset intelligence',
+    'dataset provenance',
+    'training data quality',
+    'synthetic data governance',
+    'dataset augmentation',
+    'audit-ready data exports',
+  ],
   alternates: {
     canonical: '/',
+    languages: {
+      'en-US': '/',
+    },
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+      'max-video-preview': -1,
+    },
   },
   manifest: '/site.webmanifest',
   icons: {
@@ -19,18 +54,43 @@ export const metadata: Metadata = {
     apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
   },
   openGraph: {
-    title: 'ZeroDriveX Data Intelligence Platform',
-    description: 'Real-data-first intelligence and governed dataset preparation, powered by Meta Muse models',
+    title,
+    description,
     url: 'https://data.zerodrivex.com',
     siteName: 'ZeroDriveX Data Intelligence Platform',
-    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'ZeroDriveX Data Intelligence Platform — Your data can prove itself.' }],
+    locale: 'en_US',
+    images: [
+      {
+        url: '/og-image.png',
+        secureUrl: 'https://data.zerodrivex.com/og-image.png',
+        type: 'image/png',
+        width: 1200,
+        height: 630,
+        alt: 'ZeroDriveX Data Intelligence Platform — Your data can prove itself.',
+      },
+    ],
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'ZeroDriveX Data Intelligence Platform',
-    description: 'Real-data-first intelligence and governed dataset preparation, powered by Meta Muse models',
-    images: ['/og-image.png'],
+    title,
+    description,
+    images: [
+      {
+        url: '/og-image.png',
+        alt: 'ZeroDriveX Data Intelligence Platform — Your data can prove itself.',
+      },
+    ],
   },
 };
-export default function RootLayout({children}:{children:ReactNode}) {return <html lang="en"><body><Nav />{children}</body></html>}
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en-US">
+      <body>
+        <Nav />
+        {children}
+      </body>
+    </html>
+  );
+}
